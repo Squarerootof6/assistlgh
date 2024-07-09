@@ -2,6 +2,7 @@ build/
 dist/
 assistlgh.egg-info/
 *.ipynb
+test*
 !README.md
 !setup.py
-!/assistlgh/*
+!assistlgh/
