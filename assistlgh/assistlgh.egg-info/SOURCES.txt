@@ -1,0 +1,7 @@
+README.md
+setup.py
+assistlgh.egg-info/PKG-INFO
+assistlgh.egg-info/SOURCES.txt
+assistlgh.egg-info/dependency_links.txt
+assistlgh.egg-info/requires.txt
+assistlgh.egg-info/top_level.txt
