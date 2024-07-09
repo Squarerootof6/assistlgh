@@ -8,6 +8,7 @@ assistlgh/7000-8000.txt
 assistlgh/8000-9000.txt
 assistlgh/ErrorA.py
 assistlgh/__init__.py
+assistlgh/assistlgh.mplstyle
 assistlgh/calculate.py
 assistlgh/efficiency.py
 assistlgh/latex.py

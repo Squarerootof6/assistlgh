@@ -1,5 +1,3 @@
-import numpy as np
-
 from .efficiency import *
 from .visualize import *
 from .spectra import *

@@ -16,7 +16,7 @@ setup(
     packages=find_packages(),  # 自动查找包
     include_package_data=True,  # 包含 MANIFEST.in 中指定的文件
     package_data={
-       'assistlgh':['./*.txt','./arepo_processing/*'], # 指定要包含在包中的额外文件
+       'assistlgh':['./*.txt','./arepo_processing/*','assistlgh.mplstyle'], # 指定要包含在包中的额外文件
     },
     classifiers=[
         "Programming Language :: Python :: 3",
