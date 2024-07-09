@@ -1,4 +1,6 @@
-/*
+build/
+dist/
+assistlgh.egg-info/
 !README.md
 !setup.py
 !/assistlgh/*
