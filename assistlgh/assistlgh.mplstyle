@@ -31,3 +31,5 @@ legend.handlelength:2
 legend.borderpad:0.3
 legend.borderaxespad:0.4
 legend.handletextpad:0.3
+
+image.cmap:inferno
