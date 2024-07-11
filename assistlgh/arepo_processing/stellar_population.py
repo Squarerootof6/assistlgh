@@ -163,8 +163,12 @@ def I_largeq(xi2,gamma_largeq,qmin=0.3,qmax=1):
     res[mask] *= np.log(qmax/qmin)
     res[~mask] *= (qmax**(gamma_largeq+1)-qmin**(gamma_largeq+1))/(gamma_largeq+1)
     return res
-def Inverse_q(xi1,xi2,g_largeq,g_smallq,ftwin,y):
+def Inverse_q(m1,logp,y):
     q=np.zeros(len(y))
+    g_smallq = gamma_smallq(m1,10**logp)
+    g_largeq = gamma_largeq(m1,10**logp)
+    ftwin = Ftwins(m1,10**logp).reshape(-1)
+    xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
     mask =  np.logical_and(y>0,y<=I_smallq(xi1,g_smallq))
     if g_smallq == -1:
         q[mask]= 0.1*np.exp(y[mask]/xi1)
