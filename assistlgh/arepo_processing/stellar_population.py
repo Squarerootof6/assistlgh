@@ -164,6 +164,7 @@ def I_largeq(xi2,gamma_largeq,qmin=0.3,qmax=1):
     res[~mask] *= (qmax**(gamma_largeq+1)-qmin**(gamma_largeq+1))/(gamma_largeq+1)
     return res
 def Inverse_q(m1,logp,y):
+    y=np.array([y]).reshape(-1)
     q=np.zeros(len(y))
     g_smallq = gamma_smallq(m1,10**logp)
     g_largeq = gamma_largeq(m1,10**logp)
@@ -313,6 +314,7 @@ def p_cdf(m1,logp):
     normal = process_single_element(func_list[-1],8)*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
     return fq3/normal
 def Inverse_p(m1,y):
+    y=np.array([y]).reshape(-1)
     logp=np.linspace(0.2,7.9999999,1000)
     pcdf = p_cdf(m1,logp)
     indices = np.digitize(y, pcdf).reshape(-1)
