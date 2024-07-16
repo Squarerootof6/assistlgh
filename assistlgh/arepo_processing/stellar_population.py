@@ -133,6 +133,11 @@ def normalize_xi(l,s,ftwin=0):
     gs=s[mask]
     #xi2[mask] = (gs+1)*0.3**(gs+1)/(0.3**(gs+1)-0.1**(gs+1)-np.log(0.3)*(gs+1)*0.3**(gs+1))
     xi2[mask] = (0.3**(-1-gs)/(gs+1)*(0.3**(gs+1)-0.1**(gs+1))-np.log(0.3)/(1-ftwin[mask]))**(-1)
+    
+    mask =  np.logical_and(l==-1,s==-1)
+    gs=s[mask]
+    xi2[mask] = (np.log(3)+np.log(10/3)/(1-ftwin[mask]))**(-1)
+    
     xi1=xi2*0.3**(l-s)
     return xi1,xi2
 def final_joint(m1,q,p):
@@ -187,9 +192,18 @@ def Inverse_q(m1,logp,y):
     #    q[mask]=(y[mask]-I_smallq(xi1,g_smallq)+xi2*(1+np.log(0.3))-I_largeq(xi2,g_largeq,0.3,1)*20*ftwin/(1-ftwin))/(xi2-I_largeq(xi2,g_largeq)/ftwin*(1-ftwin)*0.05)
     #else:
     #    q[mask]=(y[mask]-I_smallq(xi1,g_smallq)+xi2/(g_largeq+1)*(0.3**(g_largeq+1)+g_largeq)-I_largeq(xi2,g_largeq,0.3,1)*20*ftwin/(1-ftwin))/(xi2-I_largeq(xi2,g_largeq)/ftwin*(1-ftwin)*0.05)
-    q[mask]=(y[mask]-I_smallq(xi1,g_smallq)-I_largeq(xi2,g_largeq,0.3,0.95))/I_largeq(xi2,g_largeq)/ftwin*(1-ftwin)/20+0.95
+    mask1 = np.logical_and(mask,ftwin>0)
+    q[mask1]=(y[mask1]-I_smallq(xi1,g_smallq)-I_largeq(xi2,g_largeq,0.3,0.95))/I_largeq(xi2,g_largeq)/ftwin*(1-ftwin)/20+0.95
+    
+    mask2 = np.logical_and(mask,ftwin==0)
+    if g_largeq==-1:
+        q[mask2] = 0.3*np.exp((y[mask2]-I_smallq(xi1,g_smallq))/xi2)
+    else:
+        q[mask2]=((y[mask2]-I_smallq(xi1,g_smallq)+xi2/(g_largeq+1)*0.3**(g_largeq+1))*(g_largeq+1)/xi2)**(1/(g_largeq+1))
+
     q[q>1]=np.random.random(len(q[q>1]))*0.05+0.95
     return q
+
 
 def I_smallq(xi1,gamma_smallq,qmin=0.1,qmax=0.3):
     gamma_smallq = np.array([gamma_smallq]).reshape(-1)
@@ -265,8 +279,11 @@ def q_cdf(m1,logp,q):
     for qindex in np.where(mask)[0]:
         qq = q[qindex]
         CDF[qindex] = I_largeq(xi2,g_largeq,0.3,qq)+I_smallq(xi1,g_smallq)
-    mask = np.logical_and(q>0.95,q<=1)
+    mask = np.logical_and(np.logical_and(q>0.95,q<=1),ftwin>0)
     CDF[mask] = I_smallq(xi1,g_smallq)+I_largeq(xi2,g_largeq,0.3,0.95)+I_largeq(xi2,g_largeq)*ftwin/(1-ftwin)*20*(q[mask]-0.95)
+    
+    mask = np.logical_and(np.logical_and(q>0.95,q<=1),ftwin==0)
+    CDF[mask] = I_smallq(xi1,g_smallq)+I_largeq(xi2,g_largeq,0.3,q[mask])
     return CDF
 def Binary_Function(m1):
     #return -0.55*np.exp(-0.2*m1)+1
