@@ -159,7 +159,32 @@ def final_joint(m1,q,p):
         norm = I_largeq(xi2,g_largeq)
         mask = q>0.95
         res[m_index,mask,:] += 20*ftwin/(1-ftwin)*norm
-    return res/len(m1)/len(p)
+    return res
+def single_joint(m1,q,logp):
+    q = np.array([q]).reshape(-1)
+    logp = np.array([logp]).reshape(-1)
+    m1 = np.array([m1]).reshape(-1)
+    res = np.zeros((len(m1),len(q),len(logp)))
+    for mindex in range(len(m1)):
+        for pindex in range(len(logp)):
+            for qindex in range(len(q)):
+                mm = m1[mindex]
+                logpp = logp[pindex]
+                qq = q[qindex]
+                tmp = P_distribution(mm,logpp)
+                ftwin =  Ftwins(mm,10**logpp)
+                g_largeq = gamma_largeq(mm,10**logpp)
+                g_smallq = gamma_smallq(mm,10**logpp)
+                xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
+                norm = I_largeq(xi2,g_largeq)
+                if qq > 0.3:
+                    tmp *= xi2*qq**g_largeq
+                elif qq<0.95:
+                    tmp *=  xi1*qq**g_smallq
+                else:
+                    tmp *=  xi1*qq**g_smallq*20*ftwin/(1-ftwin)*norm
+                res[mindex,qindex,pindex] = tmp
+    return res
 def I_largeq(xi2,gamma_largeq,qmin=0.3,qmax=1):
     gamma_largeq = np.array([gamma_largeq]).reshape(-1)
     xi2 = np.array([xi2]).reshape(-1)
@@ -222,7 +247,8 @@ def largeq_P_distribution(m1,logp):
     f55 = 0.078-0.05*np.log10(m1)+0.04*np.log10(m1)**2
     boundary = np.array([0.2,1,2.7-dlogp,2.7+dlogp,5.5,8])
     indices = np.digitize(logp, boundary).reshape(-1)
-    func_list = [f1,
+    func_list = [
+                 f1,
                  lambda logp:f1+(logp-1)/(1.7-dlogp)*(f27-f1-alpha*dlogp),
                  lambda logp:f27+alpha*(logp-2.7),
                  lambda logp:f27+alpha*dlogp+(logp-2.7-dlogp)/(2.8-dlogp)*(f55-f27-alpha*dlogp),
@@ -283,7 +309,9 @@ def q_cdf(m1,logp,q):
     CDF[mask] = I_smallq(xi1,g_smallq)+I_largeq(xi2,g_largeq,0.3,0.95)+I_largeq(xi2,g_largeq)*ftwin/(1-ftwin)*20*(q[mask]-0.95)
     
     mask = np.logical_and(np.logical_and(q>0.95,q<=1),ftwin==0)
-    CDF[mask] = I_smallq(xi1,g_smallq)+I_largeq(xi2,g_largeq,0.3,q[mask])
+    for qindex in np.where(mask)[0]:
+        qq = q[qindex]
+        CDF[qindex] = I_smallq(xi1,g_smallq)+I_largeq(xi2,g_largeq,0.3,qq)
     return CDF
 def Binary_Function(m1):
     #return -0.55*np.exp(-0.2*m1)+1
@@ -314,13 +342,15 @@ def p_cdf(m1,logp):
     k3 = f27+alpha*dlogp
     boundary = np.array([0.2,1,2.7-dlogp,2.7+dlogp,5.5,8])
     indices = np.digitize(logp, boundary).reshape(-1)
-    func_list = [lambda logp:f1*logp-f1*0.2,
+    func_list = [0,
+                 lambda logp:f1*logp-f1*0.2,
                  lambda logp:f1*(logp-0.2)+(logp**2/2-logp+1/2)*k1,
                  lambda logp:f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1  +f27*logp+alpha*(logp**2/2-2.7*logp)-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp))),
                  lambda logp:f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*logp+(logp**2/2-(2.7+dlogp)*logp)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2),
-                 lambda logp:f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*5.5+(5.5**2/2-(2.7+dlogp)*5.5)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2)+(1-np.exp(-0.3*(logp-5.5)))*f55/0.3]
+                 lambda logp:f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*5.5+(5.5**2/2-(2.7+dlogp)*5.5)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2)+(1-np.exp(-0.3*(logp-5.5)))*f55/0.3,
+                 1]
     for i,index in enumerate(indices):
-        fq3[i]=process_single_element(func_list[index-1],logp[i])
+        fq3[i]=process_single_element(func_list[index],logp[i])
     
     g_largeq = gamma_largeq(m1,10**logp)
     g_smallq = gamma_smallq(m1,10**logp)
@@ -328,7 +358,7 @@ def p_cdf(m1,logp):
     xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
     #fq3 = fq3*(1+I_smallq(xi1,g_smallq)*(1-ftwin)/I_largeq(xi2,g_largeq))/Binary_Function(m1)
     fq3 = fq3*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
-    normal = process_single_element(func_list[-1],8)*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
+    normal = process_single_element(func_list[-2],8)*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
     return fq3/normal
 def Inverse_p(m1,y):
     y=np.array([y]).reshape(-1)

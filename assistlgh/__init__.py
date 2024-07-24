@@ -9,6 +9,6 @@ __bibtex__ = __citation__ = """@ARTICLE{assistlgh,
        author = {Genghao Liu},
         title = "{scientist search tools}",
       journal = {no},
-         year = "2022",
+         year = "2024",
 }
 """
