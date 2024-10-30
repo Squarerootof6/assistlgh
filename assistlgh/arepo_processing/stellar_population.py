@@ -1,5 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
+from scipy.integrate import quad
+
 def linear_interp(l,r,lv,rv,x):
     return (rv-lv)/(r-l)*(x-l)+lv
     #return (x-r)/(l-r)*lv-rv*(x-l)/(l-r)
@@ -145,46 +147,29 @@ def final_joint(m1,q,p):
     p = np.array([p]).reshape(-1)
     m1 = np.array([m1]).reshape(-1)
     res = np.zeros((len(m1),len(q),len(p)))
-    mask = q>0.3
-    Ftwin =  Ftwins(m1,p)
     for m_index in range(len(m1)):
         mm=m1[m_index]
-        g_largeq = gamma_largeq(mm,p)
-        g_smallq = gamma_smallq(mm,p)
-        ftwin = Ftwin[m_index]
-        xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
         for p_index in range(len(p)):
-            res[m_index,mask ,p_index] = xi2[p_index]*q[mask]**g_largeq[p_index]
-            res[m_index,~mask,p_index]=  xi1[p_index]*q[~mask]**g_smallq[p_index]
-        norm = I_largeq(xi2,g_largeq)
-        mask = q>0.95
-        res[m_index,mask,:] += 20*ftwin/(1-ftwin)*norm
+            pp = p[p_index]
+            ppdf = P_distribution(mm,np.log10(pp))
+            res[m_index,:,p_index] = ppdf*q_pdf(mm,q,np.log10(pp))
+
     return res
-def single_joint(m1,q,logp):
+def q_pdf(m1,q,logp):
     q = np.array([q]).reshape(-1)
-    logp = np.array([logp]).reshape(-1)
-    m1 = np.array([m1]).reshape(-1)
-    res = np.zeros((len(m1),len(q),len(logp)))
-    for mindex in range(len(m1)):
-        for pindex in range(len(logp)):
-            for qindex in range(len(q)):
-                mm = m1[mindex]
-                logpp = logp[pindex]
-                qq = q[qindex]
-                tmp = P_distribution(mm,logpp)
-                ftwin =  Ftwins(mm,10**logpp)
-                g_largeq = gamma_largeq(mm,10**logpp)
-                g_smallq = gamma_smallq(mm,10**logpp)
-                xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
-                norm = I_largeq(xi2,g_largeq)
-                if qq > 0.3:
-                    tmp *= xi2*qq**g_largeq
-                elif qq<0.95:
-                    tmp *=  xi1*qq**g_smallq
-                else:
-                    tmp *=  xi1*qq**g_smallq*20*ftwin/(1-ftwin)*norm
-                res[mindex,qindex,pindex] = tmp
-    return res
+    res = np.zeros((len(q)))
+    ftwin =  float(Ftwins(m1,10**logp))
+    g_largeq = gamma_largeq(m1,10**logp)
+    g_smallq = gamma_smallq(m1,10**logp)
+    xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
+    mask = np.logical_and(q>=0.1,q<0.3)
+    res[mask] =  xi1*q[mask]**g_smallq
+    mask = np.logical_and(q>=0.3,q<0.95)
+    res[mask] = xi2*q[mask]**g_largeq
+    
+    mask = np.logical_and(q>=0.95,q<=1)
+    res[mask] = xi2*q[mask]**g_largeq+20*ftwin/(1-ftwin)*I_largeq(xi2,g_largeq)
+    return res.reshape(-1)
 def I_largeq(xi2,gamma_largeq,qmin=0.3,qmax=1):
     gamma_largeq = np.array([gamma_largeq]).reshape(-1)
     xi2 = np.array([xi2]).reshape(-1)
@@ -257,29 +242,14 @@ def largeq_P_distribution(m1,logp):
         fq3[i]=process_single_element(func_list[index-1],logp[i])
     return fq3
 def P_distribution(m1,logp):
-    logp = np.array(logp).reshape(-1)
-    fq3=np.zeros(logp.shape)
-    alpha=0.018;dlogp=0.7;
-    f1= 0.02+0.04*np.log10(m1)+0.07*(np.log10(m1))**2
-    f27=0.039+0.07*np.log10(m1)+0.01*np.log10(m1)**2
-    f55 = 0.078-0.05*np.log10(m1)+0.04*np.log10(m1)**2
-    boundary = np.array([0.2,1,2.7-dlogp,2.7+dlogp,5.5,8])
-    indices = np.digitize(logp, boundary).reshape(-1)
-    func_list = [f1,
-                 lambda logp:f1+(logp-1)/(1.7-dlogp)*(f27-f1-alpha*dlogp),
-                 lambda logp:f27+alpha*(logp-2.7),
-                 lambda logp:f27+alpha*dlogp+(logp-2.7-dlogp)/(2.8-dlogp)*(f55-f27-alpha*dlogp),
-                 lambda logp:f55*np.exp(-0.3*(logp-5.5))]
-    for i,index in enumerate(indices):
-        fq3[i]=process_single_element(func_list[index-1],logp[i])
-    g_largeq = gamma_largeq(m1,10**logp)
-    g_smallq = gamma_smallq(m1,10**logp)
-    ftwin = Ftwins(m1,10**logp).reshape(-1)
-    xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
-    #fq3 = fq3*(1+I_smallq(xi1,g_smallq)*(1-ftwin)/I_largeq(xi2,g_largeq))/Binary_Function(m1)
-    fq3 = fq3*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
-    normal = normalize_p(m1,xi2,g_largeq,ftwin)
-    return fq3/normal
+    logp = np.array([logp]).reshape(-1)
+    fq3=largeq_P_distribution(m1,logp)
+    fac = np.ones_like(logp,dtype=np.float64)
+    for i,logpp in enumerate(logp):
+        fac[i] = q_cdf(m1,logpp,0.3)
+    fq3 = fq3/(1-fac)/normalize_p_num(m1)
+    #normal = normalize_p(m1)
+    return fq3.reshape(-1)
 def Binary_Fraction(m1):
     m1=np.array([m1]).reshape(-1)
     bf = np.zeros(len(m1))
@@ -291,12 +261,12 @@ def Binary_Fraction(m1):
     return bf
 
 def q_cdf(m1,logp,q):
-    logp=np.array([logp]).reshape(-1)
+    q = np.array([q]).reshape(-1)
     g_smallq = gamma_smallq(m1,10**logp)
     g_largeq = gamma_largeq(m1,10**logp)
     ftwin = Ftwins(m1,10**logp).reshape(-1)
     xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
-    CDF = np.zeros((len(q)))
+    CDF = np.zeros(len(q))
     mask =  np.logical_and(q>0.1,q<=0.3)
     for qindex in np.where(mask)[0]:
         qq = q[qindex]
@@ -321,7 +291,7 @@ def Binary_Function(m1):
     mask = m1<=30
     res[mask] = -0.188*logm[mask]**2+0.631*logm[mask]+0.476
     return res
-def normalize_p(m1,xi2,g_largeq,ftwin,alpha=0.018,dlogp=0.7):
+def normalize_p(m1,alpha=0.018,dlogp=0.7):
     f1  = 0.02+0.04*np.log10(m1)+0.07*(np.log10(m1))**2
     f27 = 0.039+0.07*np.log10(m1)+0.01*np.log10(m1)**2
     f55 = 0.078-0.05*np.log10(m1)+0.04*np.log10(m1)**2
@@ -329,8 +299,13 @@ def normalize_p(m1,xi2,g_largeq,ftwin,alpha=0.018,dlogp=0.7):
     k2 = (f55-f27-alpha*dlogp)/(2.8-dlogp)
     k3 = f27+alpha*dlogp
     res = f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*5.5+(5.5**2/2-(2.7+dlogp)*5.5)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2)+(1-np.exp(-0.3*2.5))*f55/0.3
-    return res*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
-def p_cdf(m1,logp):
+    return res
+def normalize_p_num(m1):
+    if m1<=6:
+        return 0.09383158*m1**1.25320938+0.39990994
+    else:
+        return 1.74227285*m1**0.20342096-1.308756
+def plargeq_cdf(m1,logp):
     logp = np.array(logp).reshape(-1)
     fq3=np.zeros(logp.shape)
     alpha=0.018;dlogp=0.7;
@@ -360,12 +335,68 @@ def p_cdf(m1,logp):
     fq3 = fq3*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
     normal = process_single_element(func_list[-2],8)*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
     return fq3/normal
-def Inverse_p(m1,y):
+
+def p_cdf(m1,logp):
+    if isinstance(logp, (int, float)):
+        return np.cumsum(P_distribution(m1,np.linspace(0.2,logp,1000))*(logp-0.2)/1000)[-1]
+    else:
+        logp = np.array([logp]).reshape(-1)
+        return np.cumsum(P_distribution(m1,logp)*(logp[-1]-logp[0])/len(logp))
+def Inverse_p(m1,y,nbins=1000):
     y=np.array([y]).reshape(-1)
-    logp=np.linspace(0.2,7.9999999,1000)
+    logp=np.linspace(0.2,7.9999999,nbins)
     pcdf = p_cdf(m1,logp)
     indices = np.digitize(y, pcdf).reshape(-1)
     res = np.zeros(len(y))
     for i,index in enumerate(indices):
         res[i]=(logp[index-1]+logp[index])/2
     return res
+def ChabrierIMF(M):
+    A = 0.8524635550318918
+    B = 0.23791194888102837
+    mc =0.079
+    sigma =0.69
+    ind = (M <= 1)
+    #phil =  A * np.exp(pow((np.log10(M) - np.log10(0.079)), 2.0) / (-2.0 * pow(0.69, 2))) / M
+    phil = A/M*np.exp(-np.log10((M/mc))**2/2/sigma**2)
+    phig = B*M**(-2.3)
+    return phil*ind+(1-ind)*phig
+
+
+def ChabrierIMF_by_Mass(M):
+    A = 0.8524635550318918
+    B = 0.23791194888102837
+    mc =0.079
+    sigma =0.69
+    ind = (M <= 1)
+    phil = M* A * np.exp(pow((np.log10(M) - np.log10(mc)), 2.0) / (-2.0 * pow(sigma, 2))) / M
+    phig = M*B*M**(-2.3)
+    return phil*ind+(1-ind)*phig
+
+def sample_massive_star_con(dM,MaxMass = 100,GMC_MASSCUT = 8):
+    lowMassFrac_by_mass = quad(ChabrierIMF_by_Mass, 0.1, GMC_MASSCUT)[0]
+    lowMassAverageMass = quad(ChabrierIMF_by_Mass, 0.1, GMC_MASSCUT)[0]
+    norm_by_number = quad(ChabrierIMF, 0.1, MaxMass)[0]
+    lowMassFrac_by_number = quad(ChabrierIMF, 0.1, GMC_MASSCUT)[0]/quad(ChabrierIMF, 0.1, MaxMass)[0]
+    CDF_intercept_by_mass = lowMassFrac_by_mass + 0.237912 / 0.3 * pow(GMC_MASSCUT,-0.3)
+    CDF_intercept = (0.23791194888102837 / 1.3 * pow(GMC_MASSCUT,-1.3))/norm_by_number/(1-lowMassFrac_by_number) 
+    if np.random.rand() > (1-lowMassFrac_by_number)*norm_by_number*dM:
+        return -1
+    else: 
+        PsampleMassive = np.random.rand()
+        M = pow(1/(-1.3*(1-lowMassFrac_by_number)*norm_by_number*(PsampleMassive-CDF_intercept)/0.23791194888102837),1/1.3)
+        return M
+def Companion_IMF(m2,IMF=ChabrierIMF,MaxMass = 100,GMC_MASSCUT = 8):
+    return Binary_Function(m2)*quad(lambda m:IMF(m2)*quad(lambda logp:final_joint(m,m2/m,10**logp),0.2,8)[0],m2,MaxMass)[0]
+
+if __name__ == '__main__':
+    from scipy.integrate import quad
+    import numpy as np
+    from matplotlib import pyplot as plt
+    from scipy.interpolate import interp1d
+    normalize_func = interp1d(np.linspace(0.8,100,1000),np.loadtxt('/home/my/squareroot/arepo_z/assistlgh/arepo_processing/normalize_list.txt'))
+    for i in range(100):
+        m1=np.random.uniform(0.8,100)
+        logp=np.linspace(0.2,7.9999999,100)
+        val = quad(lambda x: P_distribution(m1,x),0.2,8)[0]
+        print(val)
