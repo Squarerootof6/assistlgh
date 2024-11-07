@@ -16,38 +16,43 @@ def gamma_largeq(m1,p):
     if np.logical_and(m1>=0.8,m1<1.2):
         boundary = np.array([0.2,5,8])
         indices = np.digitize(logp, boundary).reshape(-1)
-        func_list = [-0.5,lambda logp:-0.5-0.3*(logp-5)]
+        func_list = [-0.5,-0.5,lambda logp:-0.5-0.3*(logp-5),-0.5-0.3*(8-5)]
     elif m1>6:
         boundary = np.array([0,1,2,4,8])
         indices = np.digitize(logp, boundary).reshape(-1)
-        func_list=[-0.5, lambda logp:-0.5-0.9*(logp-1),lambda logp:-1.4-0.3*(logp-2),-2]
+        func_list=[-0.5,-0.5, lambda logp:-0.5-0.9*(logp-1),lambda logp:-1.4-0.3*(logp-2),-2,-2]
     elif m1==3.5:
         boundary = np.array([0.2,1,4.5,6.5,8])
         indices = np.digitize(logp, boundary).reshape(-1)
-        func_list = [-0.5,lambda logp:-0.5-0.2*(logp-1),lambda logp:-1.2-0.4*(logp-4.5),-2]
+        func_list = [-0.5,-0.5,lambda logp:-0.5-0.2*(logp-1),lambda logp:-1.2-0.4*(logp-4.5),-2,-2]
     elif m1>=1.2 and m1<3.5:
         l=1.2;r=3.5
         boundary = np.array([0.2,1,4.5,5,6.5,8])
         indices = np.digitize(logp, boundary).reshape(-1)
         #(m1-r)/(l-r)*lv-rv*(m1-l)/(l-r)
         func_list = [(m1-r)/(l-r)*(-0.5)-(-0.5)*(m1-l)/(l-r),
+                        (m1-r)/(l-r)*(-0.5)-(-0.5)*(m1-l)/(l-r),
                         lambda logp:(m1-r)/(l-r)*(-0.5)-(-0.5-0.2*(logp-1))*(m1-l)/(l-r),
                         lambda logp: (m1-r)/(l-r)*(-0.5)-(-1.2-0.4*(logp-4.5))*(m1-l)/(l-r),
                         lambda logp:(m1-r)/(l-r)*(-0.5-0.3*(logp-5))-(-1.2-0.4*(logp-4.5))*(m1-l)/(l-r),
-                        lambda logp: (m1-r)/(l-r)*(-0.5-0.3*(logp-5))-(-2)*(m1-l)/(l-r)]
+                        lambda logp: (m1-r)/(l-r)*(-0.5-0.3*(logp-5))-(-2)*(m1-l)/(l-r),
+                    (m1-r)/(l-r)*(-0.5-0.3*(8-5))-(-2)*(m1-l)/(l-r)
+                    ]
     elif m1>3.5 and m1<=6:
         l=3.5;l_r=6-3.5
         boundary = np.array([0,0.2,1,2,4,4.5,6.5,8])
         indices = np.digitize(logp, boundary).reshape(-1)
         func_list = [-0.5,
                         -0.5,
+                        -0.5,
                         lambda logp:-0.7*(logp-1)/l_r*(m1-l)-0.5-0.2*(logp-1),
                         lambda logp:(-0.1*logp-0.5)/l_r*(m1-l)-0.5-0.2*(logp-1),
                         lambda logp:(-1.5+0.2*(logp-1))/l_r*(m1-l)-0.5-0.2*(logp-1),
                         lambda logp:(-0.8+0.4*(logp-4.5))/l_r*(m1-l)-1.2-0.4*(logp-4.5),
-                        -2 ]
+                        -2,
+                    -2]
     for i,index in enumerate(indices):
-        gamma_largeq[i]=process_single_element(func_list[index-1],logp[i])
+        gamma_largeq[i]=process_single_element(func_list[index],logp[i])
     return gamma_largeq
 def gamma_smallq(m1,p):
     logp=np.log10(p).reshape(-1)
@@ -55,37 +60,41 @@ def gamma_smallq(m1,p):
     if np.logical_and(m1>=0.8,m1<1.2):
         boundary = np.array([0.2,8])
         indices = np.digitize(logp, boundary).reshape(-1)
-        func_list = [0.3]
+        func_list = [0.3,0.3,0.3]
     elif m1>6:
         boundary = np.array([0.2,1,3,5.6,8])
         indices = np.digitize(logp, boundary).reshape(-1)
-        func_list = [0.1,lambda logp:0.1-0.15*(logp-1),lambda logp:-0.2-0.5*(logp-3),-1.5]
+        func_list = [0.1,0.1,lambda logp:0.1-0.15*(logp-1),lambda logp:-0.2-0.5*(logp-3),-1.5,1.5]
     elif m1==3.5:
         boundary = np.array([0.2,2.5,5.5,8])
         indices = np.digitize(logp, boundary).reshape(-1)
-        func_list = [0.2,lambda logp:0.2-0.3*(logp-2.5),lambda logp:-0.7-0.2*(logp-5.5)]
+        func_list = [0.2,0.2,lambda logp:0.2-0.3*(logp-2.5),lambda logp:-0.7-0.2*(logp-5.5),-0.7-0.2*(8-5.5)]
     elif m1>=1.2 and m1<3.5:
         l=1.2;r=3.5
         boundary = np.array([0.2,2.5,5.5,8])
         indices = np.digitize(logp, boundary).reshape(-1)
         #(m1-r)/(l-r)*lv-rv*(m1-l)/(l-r)
         func_list = [-0.1/(r-l)*(m1-l)+0.3,
+                        -0.1/(r-l)*(m1-l)+0.3,
                         lambda logp:(-0.1-0.3*(logp-2.5))/(r-l)*(m1-l)+0.3,
-                        lambda logp: (-1-0.2*(logp-5.5))*(m1-l)/(r-l)+0.3
+                        lambda logp: (-1-0.2*(logp-5.5))*(m1-l)/(r-l)+0.3,
+                    (-1-0.2*(8-5.5))*(m1-l)/(r-l)+0.3
                         ]
     elif m1>3.5 and m1<=6:
         l=3.5;r_l=6-3.5
         boundary = np.array([0.2,1,2.5,3,5.5,5.6,8])
         indices = np.digitize(logp, boundary).reshape(-1)
         func_list = [-0.1/2.5*(m1-l)+0.2,
+                        -0.1/2.5*(m1-l)+0.2,
                         lambda logp: (-0.1-0.15*(logp-1))/2.5*(m1-l)+0.2,
                         lambda logp:(-0.7+0.15*logp)/2.5*(m1-l)+0.2-0.3*(logp-2.5),
                         lambda logp: (0.35-0.2*logp)/2.5*(m1-l)+0.2-0.3*(logp-2.5),
                         lambda logp:(0.9-0.3*logp)/2.5*(m1-l)-0.7-0.2*(logp-5.5),
-                        lambda logp:(-1.9+0.2*logp)/2.5*(m1-l)-0.7-0.2*(logp-5.5)
+                        lambda logp:(-1.9+0.2*logp)/2.5*(m1-l)-0.7-0.2*(logp-5.5),
+                    (-1.9+0.2*8)/2.5*(m1-l)-0.7-0.2*(8-5.5)
                         ]
     for i,index in enumerate(indices):
-        gamma_smallq[i]=process_single_element(func_list[index-1],logp[i])
+        gamma_smallq[i]=process_single_element(func_list[index],logp[i])
     return gamma_smallq
 def Ftwins(m1,p):
     logp=np.log10(p).reshape(-1)
@@ -232,14 +241,16 @@ def largeq_P_distribution(m1,logp):
     f55 = 0.078-0.05*np.log10(m1)+0.04*np.log10(m1)**2
     boundary = np.array([0.2,1,2.7-dlogp,2.7+dlogp,5.5,8])
     indices = np.digitize(logp, boundary).reshape(-1)
-    func_list = [
+    func_list = [f1,
                  f1,
                  lambda logp:f1+(logp-1)/(1.7-dlogp)*(f27-f1-alpha*dlogp),
                  lambda logp:f27+alpha*(logp-2.7),
                  lambda logp:f27+alpha*dlogp+(logp-2.7-dlogp)/(2.8-dlogp)*(f55-f27-alpha*dlogp),
-                 lambda logp:f55*np.exp(-0.3*(logp-5.5))]
+                 lambda logp:f55*np.exp(-0.3*(logp-5.5)),
+                 f55*np.exp(-0.3*(8-5.5))
+                 ]
     for i,index in enumerate(indices):
-        fq3[i]=process_single_element(func_list[index-1],logp[i])
+        fq3[i]=process_single_element(func_list[index],logp[i])
     return fq3
 def P_distribution(m1,logp):
     logp = np.array([logp]).reshape(-1)
@@ -255,7 +266,7 @@ def Binary_Fraction(m1):
     bf = np.zeros(len(m1))
     boundary = np.array([0.8,1.2,2,5,9,16])
     indices = np.digitize(m1, boundary).reshape(-1)
-    func_list = [0.4,0.59,0.76,0.84,0.94,1]
+    func_list = [0.4,0.4,0.59,0.76,0.84,0.94,1]
     for i,index in enumerate(indices):
         bf[i]=process_single_element(func_list[index-1],m1[i])
     return bf
@@ -300,11 +311,16 @@ def normalize_p(m1,alpha=0.018,dlogp=0.7):
     k3 = f27+alpha*dlogp
     res = f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*5.5+(5.5**2/2-(2.7+dlogp)*5.5)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2)+(1-np.exp(-0.3*2.5))*f55/0.3
     return res
+def npoly(x,a,b,c,d,e,f):
+    return a*x**5+b*x**4+c*x**3+d*x**2+e*x+f
 def normalize_p_num(m1):
     if m1<=6:
-        return 0.09383158*m1**1.25320938+0.39990994
+        #return 0.09383158*m1**1.25320938+0.39990994
+        ns = [ 8.02760126e-06 , 1.32442389e-03 ,-2.01869581e-02 , 1.08479434e-01,-8.77860729e-02 ,4.98019573e-01]
     else:
-        return 1.74227285*m1**0.20342096-1.308756
+        #return 1.74227285*m1**0.20342096-1.308756
+        ns = [ 5.38062345e-10,-1.74126579e-07,2.24959858e-05,-1.53600789e-03,7.11783690e-02,9.31340157e-01]
+    return npoly(m1,*ns)
 def plargeq_cdf(m1,logp):
     logp = np.array(logp).reshape(-1)
     fq3=np.zeros(logp.shape)
@@ -323,7 +339,8 @@ def plargeq_cdf(m1,logp):
                  lambda logp:f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1  +f27*logp+alpha*(logp**2/2-2.7*logp)-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp))),
                  lambda logp:f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*logp+(logp**2/2-(2.7+dlogp)*logp)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2),
                  lambda logp:f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*5.5+(5.5**2/2-(2.7+dlogp)*5.5)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2)+(1-np.exp(-0.3*(logp-5.5)))*f55/0.3,
-                 1]
+                 f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*5.5+(5.5**2/2-(2.7+dlogp)*5.5)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2)+(1-np.exp(-0.3*(8-5.5)))*f55/0.3,
+                 ]
     for i,index in enumerate(indices):
         fq3[i]=process_single_element(func_list[index],logp[i])
     
@@ -333,7 +350,7 @@ def plargeq_cdf(m1,logp):
     xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
     #fq3 = fq3*(1+I_smallq(xi1,g_smallq)*(1-ftwin)/I_largeq(xi2,g_largeq))/Binary_Function(m1)
     fq3 = fq3*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
-    normal = process_single_element(func_list[-2],8)*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
+    normal = process_single_element(func_list[-1],8)*(1-ftwin)/I_largeq(xi2,g_largeq)/Binary_Function(m1)
     return fq3/normal
 
 def p_cdf(m1,logp):
@@ -344,7 +361,7 @@ def p_cdf(m1,logp):
         return np.cumsum(P_distribution(m1,logp)*(logp[-1]-logp[0])/len(logp))
 def Inverse_p(m1,y,nbins=1000):
     y=np.array([y]).reshape(-1)
-    logp=np.linspace(0.2,7.9999999,nbins)
+    logp=np.linspace(0.2,8,nbins)
     pcdf = p_cdf(m1,logp)
     indices = np.digitize(y, pcdf).reshape(-1)
     res = np.zeros(len(y))
