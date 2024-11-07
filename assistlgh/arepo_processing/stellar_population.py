@@ -64,7 +64,7 @@ def gamma_smallq(m1,p):
     elif m1>6:
         boundary = np.array([0.2,1,3,5.6,8])
         indices = np.digitize(logp, boundary).reshape(-1)
-        func_list = [0.1,0.1,lambda logp:0.1-0.15*(logp-1),lambda logp:-0.2-0.5*(logp-3),-1.5,1.5]
+        func_list = [0.1,0.1,lambda logp:0.1-0.15*(logp-1),lambda logp:-0.2-0.5*(logp-3),-1.5,-1.5]
     elif m1==3.5:
         boundary = np.array([0.2,2.5,5.5,8])
         indices = np.digitize(logp, boundary).reshape(-1)
@@ -223,7 +223,6 @@ def Inverse_q(m1,logp,y):
     q[q>1]=np.random.random(len(q[q>1]))*0.05+0.95
     return q
 
-
 def I_smallq(xi1,gamma_smallq,qmin=0.1,qmax=0.3):
     gamma_smallq = np.array([gamma_smallq]).reshape(-1)
     xi1 = np.array([xi1]).reshape(-1)
@@ -255,12 +254,19 @@ def largeq_P_distribution(m1,logp):
 def P_distribution(m1,logp):
     logp = np.array([logp]).reshape(-1)
     fq3=largeq_P_distribution(m1,logp)
-    fac = np.ones_like(logp,dtype=np.float64)
-    for i,logpp in enumerate(logp):
-        fac[i] = q_cdf(m1,logpp,0.3)
+    g_smallq = gamma_smallq(m1,10**logp)
+    g_largeq = gamma_largeq(m1,10**logp)
+    ftwin = Ftwins(m1,10**logp).reshape(-1)
+    xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
+    fac=I_smallq(xi1,g_smallq)
     fq3 = fq3/(1-fac)/normalize_p_num(m1)
     #normal = normalize_p(m1)
     return fq3.reshape(-1)
+def I_p(m1,logp):
+    if logp<=1:
+        return (1-0.3**(-0.6)/1.1*(0.3**1.1-0.1**1.1)*(0.3**(-0.6)/1.1*(0.3**1.1-0.1**1.1)+(0.7+0.15*np.log10(m1))/(1-0.3**0.5)))**(-1)*plargeq_cdf(m1,1)
+    
+    return 
 def Binary_Fraction(m1):
     m1=np.array([m1]).reshape(-1)
     bf = np.zeros(len(m1))
@@ -311,15 +317,19 @@ def normalize_p(m1,alpha=0.018,dlogp=0.7):
     k3 = f27+alpha*dlogp
     res = f1*(2.5-dlogp)+(dlogp**2/2-1.7*dlogp+1.445)*k1 +f27*(2.7+dlogp)+alpha*((2.7+dlogp)**2/2-2.7*(2.7+dlogp))-(f27*(2.7-dlogp)+alpha*((2.7-dlogp)**2/2-2.7*(2.7-dlogp)))+k3*5.5+(5.5**2/2-(2.7+dlogp)*5.5)*k2-(k3*(2.7+dlogp)-(2.7+dlogp)**2*k2/2)+(1-np.exp(-0.3*2.5))*f55/0.3
     return res
-def npoly(x,a,b,c,d,e,f):
-    return a*x**5+b*x**4+c*x**3+d*x**2+e*x+f
+def npoly(x,a,b,c,d,e,f,g):
+    return a*x**6+b*x**5+c*x**4+d*x**3+e*x**2+f*x+g
 def normalize_p_num(m1):
-    if m1<=6:
+    if m1<=1.2:
+        ns = [0.03607359735052491,-0.25490907315343003,0.7717391384588859,-1.2977563974283755,1.299706224915645,-0.6709258188614733,0.6156848559315645]
+    elif m1<=3.5:
+        ns = [0.00014567582297694183,-0.0023292930922643694,0.015945349278521922,-0.056500919387135105,0.11994681871195678,-0.013079644659572263,0.42621831386759307]
+    elif m1<=6:
         #return 0.09383158*m1**1.25320938+0.39990994
-        ns = [ 8.02760126e-06 , 1.32442389e-03 ,-2.01869581e-02 , 1.08479434e-01,-8.77860729e-02 ,4.98019573e-01]
+        ns = [-0.00013830125167401452,0.002838764497424726,-0.02154267640630644,0.07222741215769514,-0.08631508889838688,0.112649341574276,0.42033014286683046]
     else:
         #return 1.74227285*m1**0.20342096-1.308756
-        ns = [ 5.38062345e-10,-1.74126579e-07,2.24959858e-05,-1.53600789e-03,7.11783690e-02,9.31340157e-01]
+        ns = [ -9.774361294889914e-12,3.6480456747838973e-09,-5.569803003961848e-07,4.5401630774181484e-05,-0.002220260802053327,0.08050627352519167,0.8881471820764169]
     return npoly(m1,*ns)
 def plargeq_cdf(m1,logp):
     logp = np.array(logp).reshape(-1)
@@ -366,7 +376,10 @@ def Inverse_p(m1,y,nbins=1000):
     indices = np.digitize(y, pcdf).reshape(-1)
     res = np.zeros(len(y))
     for i,index in enumerate(indices):
-        res[i]=(logp[index-1]+logp[index])/2
+        if index==nbins:
+            res[i]=8
+        else:
+            res[i]=(logp[index-1]+logp[index])/2
     return res
 def ChabrierIMF(M):
     A = 0.8524635550318918
