@@ -130,22 +130,22 @@ def normalize_xi(l,s,ftwin=0):
     ftwin = np.array([ftwin]).reshape(-1)
     
     xi2=np.zeros(l.shape)
-    
-    mask =  np.logical_and(l!=-1,s!=-1)
+    epsilon = 1e-10
+    mask =  np.logical_and(np.abs(l+1)>epsilon,np.abs(s+1)>epsilon)
     gl=l[mask]
     gs=s[mask]
     #xi2[mask]=(gl+1)*(gs+1)/((gl-gs)*0.3**(gl+1)-0.3**(gl-gs)*0.1**(gs+1)*(gl+1)+gs+1)
     xi2[mask]=(0.3**(gl-gs)/(gs+1)*(0.3**(gs+1)-0.1**(gs+1))+(1-0.3**(gl+1))/(gl+1)/(1-ftwin[mask]))**(-1)
-    mask =  np.logical_and(l!=-1,s==-1)
+    mask =  np.logical_and(np.abs(l+1)>epsilon,np.abs(s+1)<epsilon)
     gl=l[mask]
     #xi2[mask] = (gl+1)/(1+(np.log(3)*gl+np.log(3)-1)*0.3**(gl+1))
     xi2[mask] = (0.3**(gl+1)*np.log(3)+(1-0.3**(gl+1))/(gl+1)/(1-ftwin[mask]))**(-1)
-    mask =  np.logical_and(l==-1,s!=-1)
+    mask =  np.logical_and(np.abs(l+1)<epsilon,np.abs(s+1)>epsilon)
     gs=s[mask]
     #xi2[mask] = (gs+1)*0.3**(gs+1)/(0.3**(gs+1)-0.1**(gs+1)-np.log(0.3)*(gs+1)*0.3**(gs+1))
     xi2[mask] = (0.3**(-1-gs)/(gs+1)*(0.3**(gs+1)-0.1**(gs+1))-np.log(0.3)/(1-ftwin[mask]))**(-1)
     
-    mask =  np.logical_and(l==-1,s==-1)
+    mask =  np.logical_and(np.abs(l+1)<epsilon,np.abs(s+1)<epsilon)
     gs=s[mask]
     xi2[mask] = (np.log(3)+np.log(10/3)/(1-ftwin[mask]))**(-1)
     
@@ -183,9 +183,10 @@ def I_largeq(xi2,gamma_largeq,qmin=0.3,qmax=1):
     gamma_largeq = np.array([gamma_largeq]).reshape(-1)
     xi2 = np.array([xi2]).reshape(-1)
     res = np.zeros(len(gamma_largeq))+xi2
-    mask = gamma_largeq==-1
+    epsilon=1e-10
+    mask = np.abs(gamma_largeq+1)<epsilon
     res[mask] *= np.log(qmax/qmin)
-    res[~mask] *= (qmax**(gamma_largeq+1)-qmin**(gamma_largeq+1))/(gamma_largeq+1)
+    res[~mask] *= (qmax**(gamma_largeq[~mask]+1)-qmin**(gamma_largeq[~mask]+1))/(gamma_largeq[~mask]+1)
     return res
 def Inverse_q(m1,logp,y):
     y=np.array([y]).reshape(-1)
@@ -195,27 +196,23 @@ def Inverse_q(m1,logp,y):
     ftwin = Ftwins(m1,10**logp).reshape(-1)
     xi1,xi2=normalize_xi(g_largeq,g_smallq,ftwin)
     mask =  np.logical_and(y>0,y<=I_smallq(xi1,g_smallq))
-    if g_smallq == -1:
+    if np.abs(g_smallq+1)<1e-10:
         q[mask]= 0.1*np.exp(y[mask]/xi1)
     else:
         q[mask] = ((g_smallq+1)*y[mask]/xi1+0.1**(g_smallq+1))**(1/(g_smallq+1))
         
     mask =  np.logical_and(y>I_smallq(xi1,g_smallq),y<=I_smallq(xi1,g_smallq)+I_largeq(xi2,g_largeq,0.3,0.95))
-    if g_largeq==-1:
+    if np.abs(g_largeq+1)<1e-10:
         q[mask] = 0.3*np.exp((y[mask]-I_smallq(xi1,g_smallq))/xi2)
     else:
         q[mask]=((y[mask]-I_smallq(xi1,g_smallq)+xi2/(g_largeq+1)*0.3**(g_largeq+1))*(g_largeq+1)/xi2)**(1/(g_largeq+1))
 
     mask =  np.logical_and(y>=I_smallq(xi1,g_smallq)+I_largeq(xi2,g_largeq,0.3,0.95),y<=1)
-    #if g_largeq==-1:
-    #    q[mask]=(y[mask]-I_smallq(xi1,g_smallq)+xi2*(1+np.log(0.3))-I_largeq(xi2,g_largeq,0.3,1)*20*ftwin/(1-ftwin))/(xi2-I_largeq(xi2,g_largeq)/ftwin*(1-ftwin)*0.05)
-    #else:
-    #    q[mask]=(y[mask]-I_smallq(xi1,g_smallq)+xi2/(g_largeq+1)*(0.3**(g_largeq+1)+g_largeq)-I_largeq(xi2,g_largeq,0.3,1)*20*ftwin/(1-ftwin))/(xi2-I_largeq(xi2,g_largeq)/ftwin*(1-ftwin)*0.05)
     mask1 = np.logical_and(mask,ftwin>0)
     q[mask1]=(y[mask1]-I_smallq(xi1,g_smallq)-I_largeq(xi2,g_largeq,0.3,0.95))/I_largeq(xi2,g_largeq)/ftwin*(1-ftwin)/20+0.95
     
     mask2 = np.logical_and(mask,ftwin==0)
-    if g_largeq==-1:
+    if np.abs(g_largeq+1)<1e-10:
         q[mask2] = 0.3*np.exp((y[mask2]-I_smallq(xi1,g_smallq))/xi2)
     else:
         q[mask2]=((y[mask2]-I_smallq(xi1,g_smallq)+xi2/(g_largeq+1)*0.3**(g_largeq+1))*(g_largeq+1)/xi2)**(1/(g_largeq+1))
@@ -227,9 +224,10 @@ def I_smallq(xi1,gamma_smallq,qmin=0.1,qmax=0.3):
     gamma_smallq = np.array([gamma_smallq]).reshape(-1)
     xi1 = np.array([xi1]).reshape(-1)
     res = np.zeros(len(gamma_smallq))+xi1
-    mask = gamma_smallq==-1
+    epsilon = 1e-10
+    mask = np.abs(gamma_smallq+1)<epsilon
     res[mask] *= np.log(qmax/qmin)
-    res[~mask] *= (qmax**(gamma_smallq+1)-qmin**(gamma_smallq+1))/(gamma_smallq+1)
+    res[~mask] *= (qmax**(gamma_smallq[~mask]+1)-qmin**(gamma_smallq[~mask]+1))/(gamma_smallq[~mask]+1)
     return res
 def largeq_P_distribution(m1,logp):
     logp = np.array(logp).reshape(-1)
@@ -274,7 +272,7 @@ def Binary_Fraction(m1):
     indices = np.digitize(m1, boundary).reshape(-1)
     func_list = [0.4,0.4,0.59,0.76,0.84,0.94,1]
     for i,index in enumerate(indices):
-        bf[i]=process_single_element(func_list[index-1],m1[i])
+        bf[i]=process_single_element(func_list[index],m1[i])
     return bf
 
 def q_cdf(m1,logp,q):
