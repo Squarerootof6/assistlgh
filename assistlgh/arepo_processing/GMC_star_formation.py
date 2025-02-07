@@ -3,6 +3,16 @@ import astropy.units as u
 import astropy.constants as c
 import numpy as np
 def gmc_starformation_criteria(i, SphP, All):
+    """_summary_
+
+    Args:
+        i (_int_): order of sph paricle list
+        SphP (_h5py_): Sph particle list
+        All (_AllPara_): parameter list
+
+    Returns:
+        _int_: starformation criteria flag in RIGEL
+    """
     HYDROGEN_MASSFRAC=1
     BOLTZMANN=1.38065e-16
     PROTONMASS=1.67262178e-24

@@ -353,9 +353,6 @@ def normalize(wl, fl, ivar, sfac=1, k=4, niter=0, crop=None, plot=False, n_order
 class atom_line():
     def __init__(self, wl_min, wl_max):
         scipt_path = '/'.join(os.path.realpath(__file__).split('/')[:-1])
-        df = pd.read_csv(scipt_path+'/atomic_lines.tsv', sep='\t')[['element', 'wave_A']]
-        self.atom_lines = df.loc[df['wave_A'] >
-                                 wl_min].loc[df['wave_A'] < wl_max]
         self.minimal_atomlines = {
             'H 1': np.array([6562.76701, 4861.296711, 4340.437554, 4101.710277, 3971.20, 3890.12]),
             "He 1": np.array([4026.2, 4387.9, 4471.5, 4713.1, 4921.9, 5015.7, 5047.7, 5875.6, 6678.2, 7065.2, 7281.4]),
