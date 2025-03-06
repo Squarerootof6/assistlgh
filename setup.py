@@ -63,4 +63,4 @@ setup(
     ],
     
 )
-post_install()
+#post_install()

@@ -4,6 +4,9 @@
 from openai import OpenAI
 import requests
 
+
+
+
 OLLAMA_HOST = 'http://100.95.82.15:11434'
 GENERATE_ENDPOINT = OLLAMA_HOST+'/api/generate'
 CHAT_ENDPOINT = OLLAMA_HOST+'/api/chat'

@@ -35,9 +35,10 @@ def gmc_starformation_criteria(i, SphP, All):
 
     # Jeans threshold (Necessary condition)
     # Yunwei suggests 10
-    temperature = (SphP['InternalEnergy'][i]*All.UnitEnergy_in_cgs*2/3*PROTONMASS/BOLTZMANN*(1/2*SphP['HI_Fraction'][i]+1/2))
+    '''temperature = (SphP['InternalEnergy'][i]*All.UnitEnergy_in_cgs*2/3*PROTONMASS/BOLTZMANN*(1/2*SphP['HI_Fraction'][i]+1/2))
     ndensity = (SphP['Density'][i]*All.UnitMass_in_g/All.UnitLength_in_cm**3/PROTONMASS)
-    pressure = (ndensity*BOLTZMANN*temperature)/All.UnitMass_in_g/All.UnitVelocity_in_cm_per_s**2*All.UnitLength_in_cm**3
+    pressure = (ndensity*BOLTZMANN*temperature)/All.UnitMass_in_g/All.UnitVelocity_in_cm_per_s**2*All.UnitLength_in_cm**3'''
+    pressure = (GAMMA-1)*SphP['Density'][i]*All.UnitMass_in_g/All.UnitLength_in_cm**3*SphP['InternalEnergy'][i]*All.UnitEnergy_in_cgs
     cs2 = GAMMA * pressure / SphP['Density'][i]
     if All.GravityConstantInternal == 0:
         All.G = GRAVITY / pow(All.UnitLength_in_cm, 3) * All.UnitMass_in_g * pow(All.UnitTime_in_s, 2);

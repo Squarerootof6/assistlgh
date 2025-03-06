@@ -10,6 +10,8 @@ font.family:Times New Roman
 axes.labelpad:0
 axes.titlepad:0
 axes.labelsize:medium
+axes.yaxis.ticks_position:both
+axes.xaxis.ticks_position:both
 xtick.top:True
 xtick.minor.visible:True
 xtick.major.pad:2

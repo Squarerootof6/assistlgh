@@ -4,7 +4,7 @@ import astropy.constants as c
 import pandas as pd
 import re
 import inspect
-
+GRAVITY = 6.6738e-8
 class AllPara():
     def __init__(self,para_dir):
         f = open(para_dir)
@@ -28,6 +28,10 @@ class AllPara():
         self.UnitEnergy_in_cgs = (self.UnitVelocity_in_cm_per_s)**2
         self.UnitTime_in_s = self.UnitLength_in_cm/self.UnitVelocity_in_cm_per_s
         self.data = dict(self.data)
+        if self.GravityConstantInternal == 0:
+            self.G = GRAVITY / pow(self.UnitLength_in_cm, 3) * self.UnitMass_in_g * pow(self.UnitTime_in_s, 2);
+        else:
+            self.G = self.GravityConstantInternal
     def __repr__(self):
         return self.data
     def read_units(self):
