@@ -60,6 +60,7 @@ setup(
     install_requires=[
         "matplotlib>=3.0",  # 列出依赖项
         "openai",
+        "numpy<=1.25",
     ],
     
 )

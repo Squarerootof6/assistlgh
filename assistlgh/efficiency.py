@@ -23,3 +23,12 @@ def print_local_variables():
     for var_name, var_value in local_vars.items():
         if not var_name.startswith("__") and not inspect.isclass(var_value) and not inspect.ismodule(var_value) and not inspect.isfunction(var_value):
             print(f"{var_name}: {var_value}")
+            
+import h5py
+def print_attrs(name, obj):
+    print(name)
+    for key, val in obj.attrs.items():
+        print(f"    Attribute: {key} = {val}")
+def print_hdf5_keys(filename):
+    with h5py.File(filename, 'r') as f:
+        f.visititems(print_attrs)
