@@ -25,7 +25,7 @@ class AllPara():
                 setattr(self,param_name,float(param_value))
             except:
                 continue
-        self.UnitEnergy_in_cgs = (self.UnitVelocity_in_cm_per_s)**2
+        self.UnitEnergy_in_cgs = self.UnitMass_in_g*(self.UnitVelocity_in_cm_per_s)**2
         self.UnitTime_in_s = self.UnitLength_in_cm/self.UnitVelocity_in_cm_per_s
         self.data = dict(self.data)
         if self.GravityConstantInternal == 0:
@@ -39,7 +39,7 @@ class AllPara():
         units_l = np.float64(self.data['UnitLength_in_cm'])*u.cm
         units_v = np.float64(self.data['UnitVelocity_in_cm_per_s'])*u.cm/u.s
         units_t = units_l/units_v
-        units_e = (units_v**2).cgs
+        units_e = units_m*units_v**2
         return units_m,units_l,units_v,units_t,units_e
 def Gas_Status(hdfdir,filename):
     with h5py.File(hdfdir+filename) as f:

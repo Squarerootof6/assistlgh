@@ -417,6 +417,138 @@ def sample_massive_star_con(dM,MaxMass = 100,GMC_MASSCUT = 8):
 def Companion_IMF(m2,IMF=ChabrierIMF,MaxMass = 100,GMC_MASSCUT = 8):
     return Binary_Function(m2)*quad(lambda m:IMF(m2)*quad(lambda logp:final_joint(m,m2/m,10**logp),0.2,8)[0],m2,MaxMass)[0]
 
+def generate_binary(Num,MaxMass = 100,GMC_MASSCUT = 8):
+    norm_by_number = quad(ChabrierIMF, 0.1, MaxMass)[0]
+    lowMassFrac_by_number = quad(ChabrierIMF, 0.1, GMC_MASSCUT)[0]/quad(ChabrierIMF, 0.1, MaxMass)[0]
+    CDF_intercept = (0.23791194888102837 / 1.3 * pow(GMC_MASSCUT,-1.3))/norm_by_number/(1-lowMassFrac_by_number) 
+    PsampleMassive = np.random.rand(Num)
+    Masses = pow(1/(-1.3*(1-lowMassFrac_by_number)*norm_by_number*(PsampleMassive-CDF_intercept)/0.23791194888102837),1/1.3)
+    StarPeriod = np.zeros(Num)
+    StarMR = np.zeros(Num)
+    for i in range(Num):
+        StarPeriod[i] = Inverse_p(Masses[i],np.random.uniform(0,1))
+        StarMR[i] = Inverse_q(Masses[i],StarPeriod[i],np.random.uniform(0,1))
+    return np.array([Masses,StarPeriod,StarMR]).T
+
+#========================================= Binary Interaction Case========================================
+import h5py
+import numpy as np
+import math
+
+# Constants
+GRAVITY = 6.67430e-11  # m^3 kg^-1 s^-2
+M_PI = math.pi
+SOLAR_RADIUS = 6.957e8  # meters
+
+def Rochelobe_radius(logp, q, m1):
+    q = 1/q
+    m1 = m1 * All.UnitMass_in_g
+    p = math.pow(10, logp) * 24 * 3600  # convert from days to seconds
+    a = math.pow(GRAVITY * m1 * (1 + 1/q) * math.pow(p, 2) / (4 * M_PI * M_PI), 1/3)
+    return (0.49 * math.pow(q, 2.0/3.0) / (0.69 * math.pow(q, 2.0/3.0) + math.log(1 + math.pow(q, 1.0/3.0)))) * a / SOLAR_RADIUS
+
+def interp_3d(Table, i, iz_low, iz_high, im_low, im_high, ir_low, ir_high, dz, dm, dr):
+    # Split the long interpolation formula into multiple lines for clarity
+    result =(1 - dz) * ((1 - dm) * ((1 - dr) * Table[iz_low][im_low][ir_low][i] + dr * Table[iz_low][im_low][ir_high][i]) + dm * ((1 - dr) * Table[iz_low][im_high][ir_low][i] + dr * Table[iz_low][im_high][ir_high][i])) + dz * ((1 - dm) * ((1 - dr) * Table[iz_high][im_low][ir_low][i] + dr * Table[iz_high][im_low][ir_high][i]) + dm * ((1 - dr) * Table[iz_high][im_high][ir_low][i] + dr * Table[iz_high][im_high][ir_high][i]))
+    return result
+def get_z_indicies(value, array, offset=0):
+    # Find indices for interpolation
+    idx = np.searchsorted(array, value)
+    low = max(0, idx - 1)
+    high = min(len(array) - 1, idx)
+    
+    # Calculate delta
+    if high == low:
+        delta = 0.0
+    else:
+        delta = (value - array[low]) / (array[high] - array[low])
+    
+    return low, high, delta
+def determine_case(items,UnitMass_in_g = 1.989e33,AccretionEffeciencyBeta = 0.5,Useisentropicenvelopemodel = 0):
+    with h5py.File('Arepo_GFM_Tables/Yields/Qcrits.hdf5', 'r') as f:
+        Qcrits = {
+            'Metallicity': f['/Metallicities'][:],
+            'logM': f['/logM'][:],
+            'logRl': f['/logRL'][:],
+            'Q_crit': f['/Qcrits'][:]
+        }
+                
+        # Determine qadindex
+        if AccretionEffeciencyBeta > 0.5:
+            qadindex = 0
+        elif AccretionEffeciencyBeta < 0.5:
+            qadindex = 2
+        else:
+            qadindex = 1
+        if Useisentropicenvelopemodel == 1:
+            qadindex += 3
+        # Get indices
+        Casetag = np.zeros(len(items))
+        for i,item in enumerate(items):
+            m1, logp, q, metallicity = item
+            Rl = Rochelobe_radius(logp, q, m1)
+            iz_low, iz_high, dz = get_z_indicies(metallicity, Qcrits['Metallicity'], 1e-20)
+            im_low, im_high, dm = get_z_indicies(math.log10(m1), Qcrits['logM'], 0)
+            ir_low, ir_high, dr = get_z_indicies(math.log10(Rl), Qcrits['logRl'], -0.05)
+                
+            # Interpolate values
+            qad = interp_3d(Qcrits['Q_crit'], qadindex, iz_low, iz_high, im_low, im_high, ir_low, ir_high, dz, dm, dr)
+            qth = interp_3d(Qcrits['Q_crit'], 6, iz_low, iz_high, im_low, im_high, ir_low, ir_high, dz, dm, dr)
+            qL2 = interp_3d(Qcrits['Q_crit'], 7, iz_low, iz_high, im_low, im_high, ir_low, ir_high, dz, dm, dr)
+            
+            # Debug print
+            print(f"qad: {qad}, qth: {qth}, qL2: {qL2}")
+            print(f"1/q: {1/q}")
+            
+            # Determine case
+            if qad == -1 and qL2 == -1 and qth == -1:
+                Casetag[i] = -1
+            elif 1/q > qad:
+                Casetag[i] = 1
+            elif 1/q > qL2:
+                Casetag[i] = 2
+            elif 1/q > qth:
+                Casetag[i] = 3
+            else:
+                Casetag[i] = 4
+        return Casetag
+
+def test_determine_case():
+    # Get data ranges from Qcrits.hdf5
+    with h5py.File('Arepo_GFM_Tables/Yields/Qcrits.hdf5', 'r') as f:
+        logM_min = f['/logM'][0]
+        logM_max = f['/logM'][-1]
+        logRL_min = f['/logRL'][0]
+        logRL_max = f['/logRL'][-1]
+        print(f"logM range: [{logM_min}, {logM_max}]")
+        print(f"logRL range: [{logRL_min}, {logRL_max}]")
+    
+    # Create test cases covering different scenarios
+    test_cases = [
+        # Test cases covering logM range
+        (math.pow(10, logM_min), 0.0, 1.0, 0.02),  # Minimum mass
+        (math.pow(10, logM_max), 0.0, 1.0, 0.02),  # Maximum mass
+        
+        # Test cases covering logRL range
+        (1.0, 0.0, 1.0, 0.02),  # Default case
+        (1.0, 0.0, 0.5, 0.02),  # Small q
+        (1.0, 0.0, 2.0, 0.02),  # Large q
+        
+        # Test cases covering metallicity range
+        (1.0, 0.0, 1.0, 0.01),  # Low metallicity
+        (1.0, 0.0, 1.0, 0.03),  # High metallicity
+        
+        # Edge cases
+        (0.5, -1.0, 0.3, 0.02),  # Small mass, small q
+        (2.0, 1.0, 2.5, 0.02),   # Large mass, large q
+    ]
+    
+    print("\nRunning test cases:")
+    for i, (m1, logp, q, metallicity) in enumerate(test_cases):
+        print(f"\nTest case {i+1}: m1={m1}, logp={logp}, q={q}, metallicity={metallicity}")
+        result = determine_case(m1, logp, q, metallicity)
+        print(f"Result: {result}")
+
 if __name__ == '__main__':
     from scipy.integrate import quad
     import numpy as np

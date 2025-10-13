@@ -17,9 +17,10 @@ import pkg_resources
 def load_mplstyle_path():
     return pkg_resources.resource_filename(__name__, 'assistlgh.mplstyle')
 
-def mplstyle_rc():
+def mplstyle_rc(customap=False):
     plt.style.use(pkg_resources.resource_filename(__name__, 'assistlgh.mplstyle'))
-    plt.rcParams['axes.prop_cycle'] = cycler('color', ['#C64B2B','#5084C3','#E728F4','#f9ed69','#799936','#22BB9C','#C3E3E5','#F6A495','#907CC8','#6B3A7F'])
+    if customap:
+        plt.rcParams['axes.prop_cycle'] = cycler('color', ['#C64B2B','#5084C3','#E728F4','#f9ed69','#799936','#22BB9C','#C3E3E5','#F6A495','#907CC8','#6B3A7F'])
 def auto_fontsize(figsize=4.8,fac=3):
     font_size = figsize*fac
     plt.rcParams.update({
