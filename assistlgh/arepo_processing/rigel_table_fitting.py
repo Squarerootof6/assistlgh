@@ -1,4 +1,8 @@
 import numpy as np
+from scipy.optimize import brentq, newton, root_scalar
+from scipy.interpolate import interpn, interp1d
+from numba import njit,prange
+
 
 def hardness(mass):
     if (mass<=40):
@@ -287,3 +291,626 @@ def get_LT(mass, metallicity):
     i_Z = get_Z_indfit(metallicity, LT['lZ'], LT['N_Z']);
     dlogZ = np.log10(metallicity/LT['lZ'][i_Z])/np.log10(LT['lZ'][i_Z+1]/LT['lZ'][i_Z]);
     return pow(10, (1-dlogZ)*fromfit_4(mass, LT['windrate'][i_Z], LT['mup'][i_Z], 0, 0) + dlogZ*fromfit_4(mass, LT['windrate'][i_Z+1], LT['mup'][i_Z+1], 0, 0)); 
+
+def get_IR(mass,UnitEnergy_in_cgs=1.989e+43):
+    logM = np.log10(mass)
+    logL = -18.402 + 43.428557 * logM - 29.374363 * logM**2 + 6.40502 * logM**3
+    return 10**logL *  4.807e50 / UnitEnergy_in_cgs
+
+
+# Cooling Cal
+k_B = 1.381e-16
+# H2 #
+o2p = 3.;
+fo = 0.75;
+fp = 0.25;
+# CII Silva & Viegas 2002
+A10CII = 2.3e-6
+E10CII = 1.26e-14
+g0CII = 2
+g1CII = 4
+# CI
+g0CI = 1 ;
+g1CI = 3 ;
+g2CI = 5 ;
+A10CI = 7.880e-08 ;
+A20CI = 1.810e-14;
+A21CI = 2.650e-07;
+E10CI = 3.261e-15;
+E20CI = 8.624e-15;
+E21CI = 5.363e-15;
+# OI
+g0OI = 5 ;
+g1OI = 3 ;
+g2OI = 1 ;
+A10OI = 8.910e-05 ;
+A20OI = 1.340e-10 ;
+A21OI = 1.750e-05 ;
+E10OI = 3.144e-14 ;
+E20OI = 4.509e-14 ;
+E21OI = 1.365e-14 ;
+zeta_CR = 10**-15.7   #s-1, Cosmic ray ionization rate
+def get_CII_ALPHA_GAS(T):
+    alpha = np.sqrt(T/6.67e-3)
+    beta = np.sqrt(T/1.943e6)
+    gamma = 0.7849+0.1597*np.exp(-49550/T)
+    krr = 2.995e-9/(alpha*pow((1.+alpha),(1.-gamma))*pow((1.+beta),(1.+gamma)))
+    kdr = pow(T,-1.5)*(6.346e-9*np.exp(-12.17/T)+9.793e-9*np.exp(-73.8/T)+1.634e-6*np.exp(-15230/T))
+    return krr+kdr
+
+def get_CII_ALPHA_GRAIN(T,NH,ne_cgs,X_FUV = 1,dgr = 1):
+    #T in Kelvin, NH in cm-2, zfrac in solar, DZR absolute, X_FUV in Habing
+    Av = NH * dgr / 1.87e21
+    Phi = X_FUV*np.exp(-1.87*Av)*np.sqrt(T)/ne_cgs
+    return dgr*4.558e-13/(1+6.089e-3*pow(Phi,1.128)*(1+433.1*pow(T,0.04845)*pow(Phi,-0.812-1.333e-4*np.log(T))))
+
+def get_CII_BETA_CIIH2(T):
+    return (2.31+0.99)*1e-13*pow(T,-1.3)*np.exp(-23/T)
+
+def get_xCII(T, nh_cgs,NH_cgs, xC_tot, xhm, xe,y_fac, X_LW=1.7, X_FUV=1, zeta_CR = zeta_CR, dgr = 1):
+    ne_cgs = nh_cgs * xe
+    n_cgs = nh_cgs*(1+y_fac)
+    tau_C = 1.6e-17 * NH_cgs * xC_tot
+    tau_H2 = 2.8e-22 * NH_cgs * xhm
+    fshield_C = np.exp(-tau_C)*np.exp(-tau_H2)/(1+tau_H2) #Tielens & Hollenbach (1985)
+    zeta_pi_C = 3.43e-10 * X_LW * fshield_C + 520 * 2 * xhm * zeta_CR #Draine 1978, Gredel et al. 1987: CR-induced photoionization
+    zeta_cr_C = 3.85*zeta_CR
+    fCII = (zeta_pi_C+zeta_cr_C)/(zeta_pi_C+zeta_cr_C+get_CII_ALPHA_GAS(T)*ne_cgs+get_CII_ALPHA_GRAIN(T,NH_cgs,ne_cgs,X_FUV,dgr)*n_cgs+get_CII_BETA_CIIH2(T)*nh_cgs*xhm)
+    return fCII * xC_tot
+
+def get_xCO(nh_cgs, xhm, xC_tot, xO_tot, xCII, xOII, X_LW, dgr, zeta_CR):
+    zeta16 = zeta_CR/1e-16
+    n_CO_crit = pow(4e3*dgr*pow(zeta16,-2),pow(X_LW, 1/3))*(50*zeta16/pow(dgr,1.4))
+    fCO = 2*xhm*(1-max(xCII/xC_tot,xOII/xO_tot))/(1+pow(n_CO_crit/nh_cgs,2))
+    return fCO * xC_tot
+
+def Solve2Level(q01,q10,A10):
+    f1 = q01/(q01+q10+A10)
+    return f1
+
+def Solve3Level(q01, q10, q02, q20, q12, q21, A10, A20, A21):
+    R10 = q10 + A10
+    R20 = q20 + A20
+    R21 = q21 + A21
+    a0 = R10*R20 + R10*R21 + q12*R20
+    a1 = q01*R20 + q01*R21 + R21*q02
+    a2 = q02*R10 + q02*q12 + q12*q01
+    de = a0 + a1 + a2
+    f1 = a1 / de 
+    f2 = a2 / de
+    return f1, f2
+
+def Lambda_CII158(nh_cgs, xCII, xh1, xhm, xe, T):
+    nHI_cgs, nH2_cgs, ne_cgs = nh_cgs * xh1, nh_cgs * xhm, nh_cgs * xe
+    # Draine (2011) ISM book eq (17.16) and (17.17)*/
+    T2 = T/100.;
+    k10e = 4.53e-8 * np.sqrt(1.0e4/T);
+    k10HI = 7.58e-10 * pow(T2, 0.1281+0.0087*np.log10(T2));
+    k10oH2 = 0;
+    k10pH2 = 0;
+    tmp = 0;
+    if T < 500.:
+        # fit in Wiesenfeld & Goldsmith 2014
+        k10oH2 = (5.33 + 0.11*T2)*1.0e-10;
+        k10pH2 = (4.43 + 0.33*T2)*1.0e-10;
+    else:
+    # Glover+ Jappsen 2007, for high temperature scales similar to HI
+        tmp = pow(T, 0.07);
+        k10oH2 = 3.74757785025e-10*tmp;
+        k10pH2 = 3.88997286356e-10*tmp;
+    k10H2 = k10oH2*fo + k10pH2*fp;
+    
+    
+    q10 = k10e*ne_cgs + k10HI*nHI_cgs + k10H2*nH2_cgs
+    q01 = (g1CII/g0CII) * q10 * np.exp( -E10CII/( k_B * T) );
+    return xCII/nh_cgs*A10CII*E10CII*Solve2Level(q01, q10, A10CII);
+
+def Lambda_CI370_CI610(nh_cgs, xCI, xh1, xhm, xe, T):
+    nHI, nH2, ne = nh_cgs*xh1, nh_cgs*xhm, nh_cgs*xe
+    #e collisional coefficents from Johnson, Burke, & Kingston 1987, JPhysB, 20, 2553
+    T2 = T/100.;
+    lnT2 = np.log(T2)
+    lnT = np.log(T)
+
+    #ke(u,l) = fac*gamma(u,l)/g(u)
+    fac = 8.629e-8 * np.sqrt(1.0e4/T);
+    if (T < 1.0e3) :
+        lngamma10e = (((-6.56325e-4*lnT -1.50892e-2)*lnT + 3.61184e-1)*lnT -7.73782e-1)*lnT - 9.25141;
+        lngamma20e = (((0.705277e-2*lnT - 0.111338)*lnT +0.697638)*lnT - 1.30743)*lnT -7.69735;
+        lngamma21e = (((2.35272e-3*lnT - 4.18166e-2)*lnT +0.358264)*lnT - 0.57443)*lnT -7.4387;
+    else:
+        lngamma10e = (((1.0508e-1*lnT - 3.47620)*lnT + 4.2595e1)*lnT - 2.27913e2)*lnT + 4.446e2;
+        lngamma20e = (((9.38138e-2*lnT - 3.03283)*lnT +3.61803e1)*lnT - 1.87474e2)*lnT +3.50609e2;
+        lngamma21e = (((9.78573e-2*lnT - 3.19268)*lnT +3.85049e1)*lnT - 2.02193e2)*lnT +3.86186e2;
+
+    k10e = fac * np.exp(lngamma10e) / g1CI;
+    k20e = fac * np.exp(lngamma20e) / g2CI;
+    k21e = fac * np.exp(lngamma21e) / g2CI;
+    #HI collisional rates, Draine (2011) ISM book Appendix F Table F.6
+    # NOTE: this is more updated than the LAMBDA database.
+    k10HI = 1.26e-10 * pow(T2, 0.115+0.057*lnT2);
+    k20HI = 0.89e-10 * pow(T2, 0.228+0.046*lnT2);
+    k21HI = 2.64e-10 * pow(T2, 0.231+0.046*lnT2);
+    #H2 collisional rates, Draine (2011) ISM book Appendix F Table F.6
+    k10H2p = 0.67e-10 * pow(T2, -0.085+0.102*lnT2);
+    k10H2o = 0.71e-10 * pow(T2, -0.004+0.049*lnT2);
+    k20H2p = 0.86e-10 * pow(T2, -0.010+0.048*lnT2);
+    k20H2o = 0.69e-10 * pow(T2, 0.169+0.038*lnT2);
+    k21H2p = 1.75e-10 * pow(T2, 0.072+0.064*lnT2);
+    k21H2o = 1.48e-10 * pow(T2, 0.263+0.031*lnT2);
+    k10H2 = k10H2p*fp + k10H2o*fo;
+    k20H2 = k20H2p*fp + k20H2o*fo;
+    k21H2 = k21H2p*fp + k21H2o*fo;
+    #The totol collisonal rates
+    q10 = k10HI*nHI + k10H2*nH2 + k10e*ne;
+    q20 = k20HI*nHI + k20H2*nH2 + k20e*ne;
+    q21 = k21HI*nHI + k21H2*nH2 + k21e*ne;
+    q01 = (g1CI/g0CI) * q10 * np.exp( -E10CI/(k_B*T) );
+    q02 = (g2CI/g0CI) * q20 * np.exp( -E20CI/(k_B*T) );
+    q12 = (g2CI/g1CI) * q21 * np.exp( -E21CI/(k_B*T) );
+    f1, f2 = Solve3Level(q01, q10, q02, q20, q12, q21, A10CI, A20CI, A21CI)
+    return  xCI/nh_cgs*( f1*A10CI*E10CI + f2*(A20CI*E20CI + A21CI*E21CI) )
+
+def Lambda_OI63_OI146(nh_cgs, xOI, xh1, xhm, xe, T):
+    nHI, nH2, ne = nh_cgs*xh1, nh_cgs*xhm, nh_cgs*xe
+    #collisional rates from  Draine (2011) ISM book Appendix F Table F.6
+    T2 = T/100;
+    lnT2 = np.log(T2);
+    #HI
+    k10HI = 3.57e-10 * pow(T2, 0.419-0.003*lnT2); 
+    k20HI = 3.19e-10 * pow(T2, 0.369-0.006*lnT2);
+    k21HI = 4.34e-10 * pow(T2, 0.755-0.160*lnT2);
+    #H2
+    k10H2p = 1.49e-10 * pow(T2, 0.264+0.025*lnT2);
+    k10H2o = 1.37e-10 * pow(T2, 0.296+0.043*lnT2);
+    k20H2p = 1.90e-10 * pow(T2, 0.203+0.041*lnT2);
+    k20H2o = 2.23e-10 * pow(T2, 0.237+0.058*lnT2);
+    k21H2p = 2.10e-12 * pow(T2, 0.889+0.043*lnT2);
+    k21H2o = 3.00e-12 * pow(T2, 1.198+0.525*lnT2);
+    k10H2 = k10H2p*fp + k10H2o*fo;
+    k20H2 = k20H2p*fp + k20H2o*fo;
+    k21H2 = k21H2p*fp + k21H2o*fo;
+    #e fit from Bell+1998
+    k10e = 5.12e-10 * pow(T, -0.075);
+    k20e = 4.86e-10 * pow(T, -0.026);
+    k21e = 1.08e-14 * pow(T, 0.926);
+    #total collisional rates
+    q10 = k10HI*nHI + k10H2*nH2 + k10e * ne;
+    q20 = k20HI*nHI + k20H2*nH2 + k20e * ne;
+    q21 = k21HI*nHI + k21H2*nH2 + k21e * ne;
+    q01 = (g1OI/g0OI) * q10 * np.exp( -E10OI/(k_B*T) );
+    q02 = (g2OI/g0OI) * q20 * np.exp( -E20OI/(k_B*T) );
+    q12 = (g2OI/g1OI) * q21 * np.exp( -E21OI/(k_B*T) );
+    f1, f2 = Solve3Level(q01, q10, q02, q20, q12, q21, A10OI, A20OI, A21OI)
+    return xOI/nh_cgs*( f1*A10OI*E10OI + f2*(A20OI*E20OI + A21OI*E21OI))
+
+def Lambda_CO_WJ18(nh_cgs, NH_cgs, xhm, xCO, T):
+    # divv: velocity divergence in km s-1 pc-1
+    nhm_cgs =  nh_cgs * xhm
+    X_CO = xCO/xhm
+    pc_to_cm = 3.08567758128E+18
+    R_scale = NH_cgs/nh_cgs/pc_to_cm
+    divv = 1. * R_scale**0.5 / R_scale 
+    Lambda_CO_LO = 2.16e-27 * nhm_cgs * pow(T, 3/2)
+    Lambda_CO_HI = 2.21e-28 * (divv/X_CO) / nhm_cgs * pow(T,4)
+    beta = 1.23 * pow(nhm_cgs, 0.0533) * pow(T, 0.164)
+    Lambda = pow((pow(Lambda_CO_LO, -1/beta) + pow(Lambda_CO_HI, -1/beta)), -beta)
+    
+    #print(nh_cgs,Lambda,xCO,np.log10(X_CO/divv))
+#     lambda_CO_LO = 5e-27 * (xCO/3e-4) * (T/10)**1.5 * (nh_cgs/1e3)
+#     lambda_CO_HI = 2e-26 * divv * (nh_cgs/1e2)**-1 * (T/10)**4
+#     beta = 1.23 * (nh_cgs/2)**0.0533 * T**0.164
+#     return (lambda_CO_LO**(-1/beta) + lambda_CO_HI**(-1/beta))**(-beta)/nh_cgs
+    return Lambda * xCO / nh_cgs
+
+def Lambda(T, nh_cgs, NH_cgs, xh1, xhm, xe,y_fac, xC_tot = 1.6e-4, xO_tot = 3.2e-4, X_LW=1.7, X_FUV=1, zeta_CR = zeta_CR, dgr = 1):
+    xh2 = 1 - xh1 - 2 * xhm
+    xCII = get_xCII(T, nh_cgs, NH_cgs, xC_tot, xhm, xe,y_fac, X_LW, X_FUV, zeta_CR, dgr)
+    xOII = xh2 * xO_tot
+    xOI = xO_tot - xOII
+    xCO = get_xCO(nh_cgs, xhm, xC_tot, xO_tot, xCII, xOII, X_LW, dgr, zeta_CR)
+    xCI = xC_tot - xCII - xCO
+    CII_Cooling = Lambda_CII158(nh_cgs, xCII, xh1, xhm, xe, T)
+    CI_Cooling  = Lambda_CI370_CI610(nh_cgs, xCI, xh1, xhm, xe, T)
+    OI_Cooling  = Lambda_OI63_OI146(nh_cgs, xOI, xh1, xhm, xe, T)
+    CO_Cooling  = Lambda_CO_WJ18(nh_cgs, NH_cgs, xhm,  xCO, T)
+    Lambda_metal = CII_Cooling + CI_Cooling + OI_Cooling + CO_Cooling
+    return Lambda_metal
+
+def photoelectric_heating(X_FUV=1, nH=1, T=10, NH=0, Z=1):
+    """
+    Rate of photoelectric heating per H nucleus in erg/s.
+    Weingartner & Draine 2001 prescription
+    Grain charge parameter is a highly approximate fit vs. density - otherwise need to solve ionization.
+    """
+    grain_charge =  max((5e3/nH),50)
+    c0=5.22; c1 =2.25; c2=0.04996; c3=0.0043; c4=0.147; c5=0.431; c6=0.692
+    phi_PAH = 0.5
+    #eps_PE = (c0+c1*T**c4)/(1+c2*grain_charge**c5 * (1+c5*grain_charge**c6))
+    ne = nH * 2.7e-3*pow(T/1000,3/8)*pow(zeta_CR/1e-16,0.5)*pow(nH/10,-0.5)
+    eps_PE = 4.87e-2/(1+4e-3*pow(X_FUV*np.sqrt(T)/(ne*phi_PAH),0.73)) + 3.65e-2*pow(T/1e4,0.7)/(1+2e-4*(X_FUV*np.sqrt(T)/(ne*phi_PAH)))
+    sigma_FUV = 1e-21 * Z
+    #print(X_FUV,nH,T, eps_PE, 1e-26 * X_FUV * eps_PE * np.exp(-NH*sigma_FUV) * Z)
+    #return 1e-26 * X_FUV * eps_PE * np.exp(-NH*sigma_FUV) * Z
+    #return 1.1e-25 * X_FUV /(1+3.2e-2*pow(X_FUV*pow(T/100,0.5)/ne*0.5,0.73))
+    return 1.3e-24 * Z * X_FUV * eps_PE
+
+def f_CO(nH=1, NH=1e21, T=10,X_FUV=1, Z=1):
+    """Equilibrium fraction of C locked in CO, from Tielens 2005"""
+    G0 = 1.7 * X_FUV * np.exp(-1e-21 * NH * Z)
+    if nH > 10000*G0*340: return 1.
+    x = (nH/(G0*340))**2*T**-0.5
+    return x/(1+x)
+
+def f_H2(nH=1, NH=1e21, X_FUV=1, Z=1):
+    """Krumholz McKee Tumlinson 2008 prescription for fraction of neutral H in H_2 molecules"""
+    surface_density_Msun_pc2 = NH * 1.1e-20  
+    tau_UV = min(1e-21 * Z * NH,100.)
+    G0 = 1.7 * X_FUV * np.exp(-tau_UV)
+    chi = 71. * X_FUV / nH
+    psi = chi * (1.+0.4*chi)/(1.+1.08731*chi)
+    s = (Z + 1.e-3) * surface_density_Msun_pc2 / (1e-100 + psi)
+    q = s * (125. + s) / (11. * (96. + s))
+    fH2 = 1. - (1.+q*q*q)**(-1./3.)
+    ind1 = (q < 0.2)
+    ind2 = (q > 10)
+
+    return fH2 * (1-ind1) * (1-ind2) + q*q*q * (1. - 2.*q*q*q/3.)/3. * ind1 + (1. - 1/q) * ind2
+
+def H2_cooling(nH,NH,T,X_FUV,Z):
+    """
+    Glover & Abel 2008 prescription for H_2 cooling; accounts for H2-H2 and H2-HD collisions.
+    Rate per H nucleus in erg/s.
+    """
+    f_molec = 0.5 * f_H2(nH,NH,X_FUV,Z)
+    EXPmax = 90
+    logT = np.log10(T)
+    T3 = T/1000
+    Lambda_H2_thick = (6.7e-19*np.exp(-min(5.86/T3,EXPmax)) + 1.6e-18*np.exp(-min(11.7/T3,EXPmax)) + 3.e-24*np.exp(-min(0.51/T3,EXPmax)) + 9.5e-22*pow(T3,3.76)*np.exp(-min(0.0022/(T3*T3*T3),EXPmax))/(1.+0.12*pow(T3,2.1))) / nH; #  super-critical H2-H cooling rate [per H2 molecule]
+    Lambda_HD_thin = ((1.555e-25 + 1.272e-26*pow(T,0.77))*np.exp(-min(128./T,EXPmax)) + (2.406e-25 + 1.232e-26*pow(T,0.92))*np.exp(-min(255./T,EXPmax))) * np.exp(-min(T3*T3/25.,EXPmax)); #  optically-thin HD cooling rate [assuming all D locked into HD at temperatures where this is relevant], per molecule
+    
+    q = logT - 3.; Y_Hefrac=0.25; X_Hfrac=0.75; #  variable used below
+    Lambda_H2_thin = max(nH-2.*f_molec,0) * X_Hfrac * np.power(10., max(-103. + 97.59*logT - 48.05*logT*logT + 10.8*logT*logT*logT - 0.9032*logT*logT*logT*logT , -50.)); #  sub-critical H2 cooling rate from H2-H collisions [per H2 molecule]; this from Galli & Palla 1998
+    Lambda_H2_thin += Y_Hefrac * np.power(10., max(-23.6892 + 2.18924*q -0.815204*q*q + 0.290363*q*q*q -0.165962*q*q*q*q + 0.191914*q*q*q*q*q, -50.)); #  H2-He; often more efficient than H2-H at very low temperatures (<100 K); this and other H2-x terms below from Glover & Abel 2008
+    Lambda_H2_thin += f_molec * X_Hfrac * np.power(10., max(-23.9621 + 2.09434*q -0.771514*q*q + 0.436934*q*q*q -0.149132*q*q*q*q -0.0336383*q*q*q*q*q, -50.)); #  H2-H2; can be more efficient than H2-H when H2 fraction is order-unity
+    
+    f_HD = min(0.00126*f_molec , 4.0e-5*nH)
+
+    nH_over_ncrit = Lambda_H2_thin / Lambda_H2_thick
+    Lambda_HD = f_HD * Lambda_HD_thin / (1. + f_HD/(f_molec+1e-10)*nH_over_ncrit) * nH 
+    Lambda_H2 = f_molec * Lambda_H2_thin / (1. + nH_over_ncrit) * nH
+    #return Lambda_H2 + Lambda_HD
+    return Lambda_H2 
+
+def CII_cooling(nH=1, Z=1, T=10, NH=1e21, X_FUV=1,prescription="Simple",zeta_CR=2e-16,y_fac = (1.0 - 0.76) / 4.0 / 0.76):    
+    """Cooling due to atomic and/or ionized C. Uses either Hopkins 2022 FIRE-3 or simple prescription. Rate per H nucleus in erg/s."""
+    if prescription=="Hopkins 2022 (FIRE-3)":
+        return atomic_cooling_fire3(nH,NH,T,Z,X_FUV)
+    if prescription=="Deng":
+        xC_tot = 1.1e-4 * Z
+        xO_tot = 2.2e-4 * Z
+        xe = 2.7e-3*pow(T/1000,3/8)*pow(zeta_CR/1e-16,0.5)*pow(nH/10,-0.5) #Bialy19
+        xhm = f_H2(nH, NH, X_FUV, Z)/2
+        xh1 = 1-2*xhm
+        X_Draine = X_FUV/1.7
+        return nH * Lambda(T, nH, NH, xh1, xhm, xe,y_fac, xC_tot, xO_tot, X_Draine, X_Draine, zeta_CR, Z)
+    if prescription=="Wolfire 2003":
+        xhm = f_H2(nH, NH, X_FUV, Z)/2
+        xh1 = 1-2*xhm
+        xe = 2.7e-3*pow(T/1000,3/8)*pow(zeta_CR/1e-16,0.5)*pow(nH/10,-0.5) #Bialy19
+        return nH * Lambda_W03(nH, xh1, xe, T, Z)
+    T_CII = 91
+    f_C = 1-f_CO(nH,NH,T,X_FUV,Z)
+    xc = 1.1e-4
+    return 8e-10 * 1.256e-14 * xc * np.exp(-T_CII/T) * Z * nH * f_C
+
+def lyman_cooling(nH=1,T=1000):
+    """Rate of Lyman-alpha cooling from Koyama & Inutsuka 2002 per H nucleus in erg/s. Actually a hard upper bound assuming xe ~ xH ~ xH+ ~ 1/2, see Micic 2013 for discussion."""
+    return 2e-19 * np.exp(-1.184e5/T) * nH
+
+def atomic_cooling_fire3(nH,NH,T,Z,X_FUV):
+    """Cooling due to atomic and ionized C. Uses Hopkins 2022 FIRE-3 prescription. Rate per H nucleus in erg/s."""
+    f = f_CO(nH,NH,T,X_FUV,Z)
+    return 1e-27 * (0.47*T**0.15 * np.exp(-91/T) + 0.0208 * np.exp(-23.6/T)) * (1-f) * nH * Z
+
+def get_tabulated_CO_coolingrate(T,NH,nH2):
+    """Tabulated CO cooling rate from Omukai 2010, used for Gong 2017 implementation of CO cooling."""
+    logT = np.log10(T)
+    logNH = np.log10(NH)
+    table = np.loadtxt("ismulator/coolingtables/omukai_2010_CO_cooling_alpha_table.dat")
+    T_CO_table = np.log10(table[0,1:])
+    NH_table = table[1:,0]
+    alpha_table = table[1:,1:].T
+    LLTE_table = np.loadtxt("ismulator/coolingtables/omukai_2010_CO_cooling_LLTE_table.dat")[1:,1:].T
+    n12_table = np.loadtxt("ismulator/coolingtables/omukai_2010_CO_cooling_n12_table.dat")[1:,1:].T
+    alpha = interpn((T_CO_table, NH_table), alpha_table, [[logT,logNH]],bounds_error=False,fill_value=None)
+    LLTE = 10**-interpn((T_CO_table, NH_table), LLTE_table, [[logT,logNH]],bounds_error=False,fill_value=None)
+    n12 = 10**interpn((T_CO_table, NH_table), n12_table, [[logT,logNH]],bounds_error=False,fill_value=None)
+    L0 = 10**-np.interp(np.log10(T),T_CO_table,[24.77, 24.38, 24.21, 24.03, 23.89 ,23.82 ,23.42 ,23.13 ,22.91 ,22.63, 22.28])
+    LM = (L0**-1 + nH2/LLTE + (1/L0)*(nH2/n12)**alpha * (1 - n12*L0/LLTE))**-1
+    return LM
+
+def CO_cooling(nH=1, T=10, NH=0,Z=1,X_FUV=1,divv=None,xCO=None,simple=False,prescription='Whitworth 2018'):
+    """
+    Rate of CO cooling per H nucleus in erg/s.
+    Three prescriptions are implemented: Gong 2017, Whitworth 2018, and Hopkins 2022 (FIRE-3).
+    Prescriptions that require a velocity gradient will assume a standard ISM size-linewidth relation by default, 
+    unless div v is provided.2
+    """
+    fmol = f_CO(nH,NH,T,X_FUV,Z)
+    pc_to_cm = 3.08567758128E+18
+    if xCO is None:
+        xCO = fmol * Z * 1.1e-4 * 2
+    if divv is None:
+        R_scale = NH/nH/pc_to_cm
+        divv = 1. * R_scale**0.5 / R_scale # size-linewidth relation
+
+    if prescription=="Gong 2017":
+        n_H2 = fmol*nH/2
+        neff = n_H2 + nH*2**0.5 * (2.3e-15/(3.3e-16*(T/1000)**-0.25)) # Eq. 34 from gong 2017, ignoring electrons 
+        NCO = xCO * nH / (divv / pc_to_cm)
+        LCO = get_tabulated_CO_coolingrate(T,NCO,neff)
+        return LCO * xCO * n_H2
+    elif prescription=='Hopkins 2022 (FIRE-3)':
+        sigma_crit_CO=  1.3e19 * T / Z
+        ncrit_CO=1.9e4 * T**0.5
+        return 2.7e-31 * T**1.5 * (xCO/3e-4) * nH/(1 + (nH/ncrit_CO)*(1+NH/sigma_crit_CO)) #lambda_CO_HI)
+    elif prescription=='Whitworth 2018':
+        lambda_CO_LO = 5e-27 * (xCO/3e-4) * (T/10)**1.5 * (nH/1e3)
+        lambda_CO_HI = 2e-26 * divv * (nH/1e2)**-1 * (T/10)**4
+        beta = 1.23 * (nH/2)**0.0533 * T**0.164
+        if simple: return np.min([lambda_CO_LO, lambda_CO_HI],axis=0)
+        else: return (lambda_CO_LO**(-1/beta) + lambda_CO_HI**(-1/beta))**(-beta)
+
+def CR_heating(T, nH, zeta_CR=2e-16, X_FUV = 1, Z = 1, NH=None):
+    """Rate of cosmic ray heating in erg/s/H, just assuming 10eV per H ionization."""
+    xe = 2.7e-3*pow(T/1000,3/8)*pow(zeta_CR/1e-16,0.5)*pow(nH/10,-0.5) #Bialy19
+    q_H = (6.5+26.4*pow(xe/(xe+0.07),0.5)) * 1.6021766339999997e-12
+    q_H2 = 10 
+    xhm = f_H2(nH, NH, X_FUV, Z)/2
+    if (nH>100) & (nH<4):
+        q_H2 + 3*(np.log10(nH)-2)/4
+    q_H2 *= 1.6021766339999997e-12
+#     if NH is not None:
+#         return (zeta_CR*(xhm*q_H2)+zeta_CR*(1-xhm)*q_H)/(1+(NH/1e21))
+#     else:
+#         return zeta_CR*(xhm*q_H2)+zeta_CR*(1-xhm)*q_H
+    return (1-2*xhm)*1.6022e-12*zeta_CR + xhm*1.6022e-12*1.96*zeta_CR + (1.0 - 0.76) / 4.0 / 0.76 * 1.1 *1.6022e-12*zeta_CR
+    
+#     if NH is not None:
+#         return 3e-27 * (zeta_CR / 2e-16)/(1+(NH/1e21))
+#     else:
+#         return 3e-27 * (zeta_CR / 2e-16)
+    
+@njit(fastmath=True,error_model='numpy')
+def gas_dust_heating_coeff(T,Z,dust_coupling):
+    """Coefficient alpha such that the gas-dust heat transfer is alpha * (T-T_dust)
+    
+    Uses Hollenbach & McKee 1979 prescription, assuming 10 Angstrom min grain size.
+    """
+    return 1.1e-32 * dust_coupling* Z * np.sqrt(T) * (1-0.8*np.exp(-75/T)) 
+
+@njit(fastmath=True,error_model='numpy')
+def dust_gas_cooling(nH=1,T=10,Tdust=20,Z=1,dust_coupling=1):
+    """
+    Rate of heat transfer from gas to dust in erg/s per H
+    """
+    return nH * gas_dust_heating_coeff(T,Z,dust_coupling) * (Tdust-T)  #3e-26 * Z * (T/10)**0.5 * (Tdust-T)/10 * (nH/1e6)
+
+def compression_heating(nH=1,T=10):
+    """Rate of compressional heating per H in erg/s, assuming freefall collapse (e.g. Masunaga 1998)"""
+    return 1.2e-27 * np.sqrt(nH/1e6) * (T/10) # ceiling here to get reasonable results in diffuse ISM
+
+def turbulent_heating(sigma_GMC=100., M_GMC=1e6):
+    """
+    Rate of tubulent dissipation per H in erg/s, assuming a turbulent GMC with virial parameter=1 of a certain surface density and mass.
+    
+    Note that much of the cooling can take place in shocks that are way out of equilibrium, so this doesn't necessarily capture the full effect.
+    """
+    return 5e-27 * (M_GMC/1e6)**0.25 * (sigma_GMC/100)**(1.25)
+
+def dust_temperature(nH=1,T=10,Z=1,NH=0, X_FUV=1, X_OPT=1, z=0,beta=2,dust_coupling=1):
+    """
+    Equilibrium dust temperature obtained by solving the dust energy balance equation accounting for absorption, emission, and gas-dust heat transfer.    
+    """
+    abs = dust_absorption_rate(NH,Z,X_FUV,X_OPT,z, beta)
+    sigma_IR_0 = 2e-25
+    Tdust_guess = 10*(abs / (sigma_IR_0 * Z * 2.268))**(1./(4+beta))
+    Tdust_guess = max(Tdust_guess, (abs/(4.5e-23*Z*2.268))**0.25)
+    Tdust_guess = max(Tdust_guess, T - 2.268 * sigma_IR_0 * Z * (min(T,150)/10)**beta * (T/10)**4 /  (gas_dust_heating_coeff(T,Z,dust_coupling)*nH))
+
+    func = lambda dT: net_dust_heating(dT, nH,T,NH,Z,X_FUV,X_OPT,z,beta,abs,dust_coupling) # solving for the difference T - Tdust since that's what matters for dust heating
+    result = root_scalar(func, x0 = Tdust_guess-T,x1 =(Tdust_guess*1.1 - T), method='secant',xtol=1e-5)#,rtol=1e-3,xtol=1e-4*T)
+    Tdust = T+result.root
+    if not result.converged:
+        func = lambda logT: net_dust_heating(10**logT - T, nH,T,NH,Z,X_FUV,X_OPT,z,beta,abs,dust_coupling)
+        result = root_scalar(func, bracket=[-1,8], method='brentq')
+        Tdust = 10**result.root
+    return Tdust
+
+@njit(fastmath=True,error_model='numpy')
+def net_dust_heating(dT,nH,T,NH,Z=1,X_FUV=1,X_OPT=1,z=0, beta=2, absorption=-1,dust_coupling=1):
+    """Derivative of the dust energy in the dust energy equation, solve this = 0 to get the equilibrium dust temperature."""
+    Td = T + dT
+    sigma_IR_0 = 2e-25
+    sigma_IR_emission = sigma_IR_0 * Z * (min(Td,150)/10)**beta # dust cross section per H in cm^2
+    lambdadust_thin = 2.268 * sigma_IR_emission * (Td/10)**4
+    lambdadust_thick = 2.268 * (Td/10)**4 / (NH+1e-100)
+    psi_IR = 1/(1/lambdadust_thin + 1/lambdadust_thick) #interpolates the lower envelope of the optically-thin and -thick limits
+    lambda_gd = dust_gas_cooling(nH,T,Td,Z,dust_coupling)
+    
+    if absorption < 0:
+        absorption = dust_absorption_rate(NH,Z,X_FUV,X_OPT,z, beta)
+    return absorption - lambda_gd - psi_IR
+
+@njit(fastmath=True,error_model='numpy')
+def dust_absorption_rate(NH,Z=1,X_FUV=1,X_OPT=1,z=0, beta=2):
+    """Rate of radiative absorption by dust, per H nucleus in erg/s."""
+    T_CMB = 2.73*(1+z)
+    X_OPT_eV_cm3 = X_OPT * 0.54
+    X_IR_eV_cm3 = X_OPT * 0.39
+    X_FUV_eV_cm3 = X_FUV * 0.041
+    T_IR=max(20,3.8*(X_OPT_eV_cm3+X_IR_eV_cm3)**0.25)  # assume 20K dust emission or the blackbody temperature of the X_FUV energy density, whichever is greater
+
+    sigma_UV = 1e-21 * Z
+    sigma_OPT = 3e-22 * Z
+    sigma_IR_0 = 2e-25
+    sigma_IR_CMB = sigma_IR_0 * Z * (min(T_CMB,150)/10)**beta
+    sigma_IR_ISRF = sigma_IR_0 * Z * (min(T_IR,150)/10)**beta
+    
+    tau_UV = min(sigma_UV * NH,100)
+    gamma_UV = X_FUV * np.exp(-tau_UV) * 5.965e-25 * Z
+
+    tau_OPT = min(sigma_OPT * NH,100)
+    gamma_OPT = X_OPT * 7.78e-24 * np.exp(-tau_OPT) * Z
+    gamma_IR =  2.268 * sigma_IR_CMB * (T_CMB/10)**4 + 0.048 * (X_IR_eV_cm3 + X_OPT_eV_cm3 * (-np.expm1(-tau_OPT)) + X_FUV_eV_cm3 * (-np.expm1(-tau_UV))) * sigma_IR_ISRF
+    return gamma_IR + gamma_UV + gamma_OPT
+
+all_processes = "CR Heating", "Lyman cooling", "Photoelectric", "CII Cooling", "CO Cooling", "Dust-Gas Coupling", "Grav. Compression", "H_2 Cooling", "Turb. Dissipation"
+
+def net_heating(T=10, nH=1, NH=0, X_FUV=1,X_OPT=1,Z=1, z=0, divv=None, zeta_CR=2e-16, Tdust=None,jeans_shielding=False,dust_beta=2.,dust_coupling=1,sigma_GMC=100,M_GMC=1e6, processes=all_processes, attenuate_cr=True,co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)",y_fac=(1.0 - 0.76) / 4.0 / 0.76):
+    if jeans_shielding:
+        lambda_jeans = 8.1e19 * nH**-0.5 * (T/10)**0.5
+        NH = np.max([nH*lambda_jeans*jeans_shielding, NH],axis=0)
+    if Tdust==None:
+        Tdust = dust_temperature(nH,T,Z,NH,X_FUV,X_OPT,z,dust_beta,dust_coupling * ("Dust-Gas Coupling" in processes))
+
+    rate = 0
+    for process in processes:
+        if process == "CR Heating": rate += CR_heating(T, nH, zeta_CR, X_FUV, Z, NH=NH*attenuate_cr)
+        if process == "Lyman cooling": rate -= lyman_cooling(nH,T)
+        if process == "Photoelectric": rate += photoelectric_heating(X_FUV, nH,T, NH, Z)
+        if process == "CII Cooling": rate -= CII_cooling(nH, Z, T, NH, X_FUV,prescription=cii_prescription,zeta_CR = zeta_CR,y_fac = y_fac)
+        if process == "CO Cooling": rate -= CO_cooling(nH,T,NH,Z,X_FUV,divv,prescription=co_prescription)
+        if process == "Dust-Gas Coupling": rate += dust_gas_cooling(nH,T,Tdust,Z,dust_coupling)
+        if process == "H_2 Cooling": rate -= H2_cooling(nH,NH,T,X_FUV,Z)
+        if process == "Grav. Compression": rate += compression_heating(nH,T)
+        if process == "Turb. Dissipation": rate += turbulent_heating(sigma_GMC=sigma_GMC,M_GMC=M_GMC)
+        
+    return rate
+
+def equilibrium_temp(nH=1, NH=0, X_FUV=1,X_OPT=1, Z=1, z=0, divv=None, zeta_CR=2e-16, Tdust=None,jeans_shielding=False,
+                     dust_beta=2.,dust_coupling=1,sigma_GMC=100.,M_GMC=1e6, processes=all_processes,attenuate_cr=True,
+                     co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)",return_Tdust=True,T_guess=None):
+    
+    if NH==0: NH=1e18
+    params = nH, NH, X_FUV,X_OPT, Z, z, divv, zeta_CR, Tdust, jeans_shielding, dust_beta, dust_coupling, sigma_GMC,M_GMC,processes, attenuate_cr, co_prescription, cii_prescription
+    func = lambda logT: net_heating(10**logT, *params) # solving vs logT converges a bit faster
+    
+    use_brentq = True
+    if T_guess is not None: # we have an initial guess that is supposed to be close (e.g. previous grid point)
+        T_guess2 = T_guess * 1.01
+        result = root_scalar(func, x0=np.log10(T_guess),x1=np.log10(T_guess2), method='secant',rtol=1e-3) #,rtol=1e-3,xtol=1e-4*T)
+        if result.converged:
+            T = 10**result.root; use_brentq = False
+
+    if use_brentq: 
+        try:
+            T = 10**brentq(func, -1,5,rtol=1e-3,maxiter=500)
+        except:
+            try:
+                T = 10**brentq(func, -1,10,rtol=1e-3,maxiter=500)
+            except:
+                raise("Couldn't solve for temperature! Try some other parameters.")
+
+    if return_Tdust:
+        Tdust = dust_temperature(nH,T,Z,NH,X_FUV,X_OPT,z,dust_beta,dust_coupling*("Dust-Gas Coupling" in processes))
+        return T, Tdust
+    else:
+        return T
+
+def equilibrium_temp_grid(nH, NH, X_FUV=1, X_OPT=1, Z=1, z=0, divv=None, zeta_CR=2e-16, Tdust=None,jeans_shielding=False,
+    dust_beta=2.,dust_coupling=1,sigma_GMC=100.,M_GMC=1e6, processes=all_processes,attenuate_cr=True,return_Tdust=False,
+    co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)"):
+        
+    params = X_FUV, X_OPT, Z, z, divv, zeta_CR, Tdust, jeans_shielding, dust_beta, dust_coupling, sigma_GMC,M_GMC,processes, attenuate_cr, co_prescription, cii_prescription
+    Ts = []
+    Tds = []
+
+    T_guess = None
+    for i in range(len(nH)): # we do a pass on the grid where we use previously-evaluated temperatures to get good initial guesses for the next grid point
+        if i==1:
+            T_guess = Ts[-1]
+        elif i>1:
+            T_guess = 10**interp1d(np.log10(nH[:i]),np.log10(Ts),fill_value="extrapolate")(np.log10(nH[i])) # guess using linear extrapolation in log space
+
+        sol = equilibrium_temp(nH[i],NH[i],*params,return_Tdust=return_Tdust,T_guess=T_guess)
+        if return_Tdust:
+            T, Tdust = sol
+            Ts.append(T)
+            Tds.append(Tdust)
+        else:
+            Ts.append(sol)
+    if return_Tdust:
+        return np.array(Ts), np.array(Tds)
+    else:
+        return np.array(Ts)
+def get_equilibrium_curve(snap,mask_sf,n,rho0,M):
+    #NH2 = np.mean((snap['0_H2_Fraction'][mask_sf]*snap['0_Density'][mask_sf]/2/c.m_p*snap['0_Diameters'][mask_sf]).to('cm-2').value)
+    NH2 = np.median((2*snap['0_H2_Fraction'][mask_sf]*snap['0_Density'][mask_sf]/c.m_p*snap['0_Diameters'][mask_sf]).to('cm-2').value)
+    #NH2 = (np.sum(snap['0_H2_Fraction'][mask_sf]*snap['0_Masses'][mask_sf])/2/c.m_p/np.sum(3*snap['0_Volume'][mask_sf]/4/np.pi)**(2/3)/np.pi).to('cm-2').value
+    #Z = 0.03288415123139433             #Metalicity in solar
+    Z = np.sum(snap['0_GFM_MetallicityTimesMasses'][mask_sf])/np.sum(snap['0_Masses'][mask_sf])/0.012892950745
+    z = 0                 #redshift
+    Habing = u.Unit(5.29e-14*u.erg*u.cm**(-3)*1000)
+    Draine = 1.71*Habing
+    #X_FUV = (np.median(snap['0_PhotonDensity'][mask_sf,1]*8.45*u.eV+snap['0_PhotonDensity'][mask_sf,2]*12.26*u.eV)).to(Habing).value*1e63         #Habing, FUV radiation field strength
+    #X_OPT = (np.median(snap['0_PhotonDensity'][mask_sf,0])*3.67*u.eV).to(Habing).value*1e63        #IR-Opt radiation field strength
+    X_FUV = (np.sum((snap['0_PhotonDensity'][mask_sf,1]*8.45*u.eV+snap['0_PhotonDensity'][mask_sf,2]*12.26*u.eV)*snap['0_Volume'][mask_sf])/np.sum(snap['0_Volume'][mask_sf])).to(Habing).value*1e63         #Habing, FUV radiation field strength
+    X_OPT = (np.sum(snap['0_PhotonDensity'][mask_sf,0]*3.67*u.eV*snap['0_Volume'][mask_sf])/np.sum(snap['0_Volume'][mask_sf])).to(Habing).value*1e63        #IR-Opt radiation field strength
+    #Tdust = np.median(snap['0_DustTemperature'][mask_sf]).to(u.K).value
+    Tdust = (np.sum(snap['0_DustTemperature'][mask_sf]*snap['0_Masses'][mask_sf])/np.sum(snap['0_Masses'])).to(u.K).value
+    NH_alpha = 0.3        #Column density scaling: $\alpha$ where $N_{\rm H}=N_{\rm H,0}\left(n_{\rm H}/100\rm cm^{-3}\right)^{\alpha}$
+    fJ = 0.25             #Ratio of shielding length floor to Jeans wavelength
+    dust_beta = 2.        #Dust spectral index
+    dust_coeff = 10**0.   #dust-gas coupling coefficient
+    sigma_GMC = 10**2.    #turb. dissipation'
+    attenuate_cr = True   #Cosmic ray attenuation
+    NH = NH2 * (n/1e2)**NH_alpha
+    
+    processes_Deng = "CR Heating", "Lyman cooling", "Photoelectric", "CII Cooling", "H_2 Cooling", "Dust-Gas Coupling"
+    Teq_Deng = equilibrium_temp_grid(n, NH, X_FUV=X_FUV, X_OPT=X_OPT, Z=Z, z=z, divv=None, zeta_CR=1.78e-16, Tdust=Tdust,jeans_shielding=False,
+    dust_beta=2.,dust_coupling=1,sigma_GMC=rho0.value,M_GMC=M.value, processes=processes_Deng,attenuate_cr=attenuate_cr,return_Tdust=False,
+    co_prescription=None,cii_prescription='Deng')
+    return Teq_Deng
+def process_cal( nHs, NHs,T=100, X_FUV=1,X_OPT=1,Z=1, z=0, divv=None, zeta_CR=2e-16, Tdust=None,jeans_shielding=False,dust_beta=2.,dust_coupling=1,sigma_GMC=100,M_GMC=1e6, processes=all_processes, attenuate_cr=True,co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)",y_fac=(1.0 - 0.76) / 4.0 / 0.76):
+    process_rate=np.zeros((len(processes),len(nHs)))
+    for i in prange(len(nHs)):
+        nH = nHs[i]
+        NH = NHs[i]
+        if jeans_shielding:
+            lambda_jeans = 8.1e19 * nH**-0.5 * (T/10)**0.5
+            NH = np.max([nH*lambda_jeans*jeans_shielding, NH],axis=0)
+        if Tdust==None:
+            Tdust = dust_temperature(nH,T,Z,NH,X_FUV,X_OPT,z,dust_beta,dust_coupling * ("Dust-Gas Coupling" in processes))
+        for j in range(len(processes)):
+            process = processes[j]
+            if process == "CR Heating": process_rate[j,i] = CR_heating(T, nH, zeta_CR, X_FUV, Z, NH=NH*attenuate_cr)
+            if process == "Lyman cooling": process_rate[j,i] = lyman_cooling(nH,T)
+            if process == "Photoelectric": process_rate[j,i] = photoelectric_heating(X_FUV, nH,T, NH, Z)
+            if process == "CII Cooling": process_rate[j,i] = CII_cooling(nH, Z, T, NH, X_FUV,prescription=cii_prescription,zeta_CR = zeta_CR,y_fac=y_fac)
+            if process == "CO Cooling": process_rate[j,i] = CO_cooling(nH,T,NH,Z,X_FUV,divv,prescription=co_prescription)
+            if process == "Dust-Gas Coupling": process_rate[j,i] = dust_gas_cooling(nH,T,Tdust,Z,dust_coupling)
+            if process == "H_2 Cooling": process_rate[j,i] = H2_cooling(nH,NH,T,X_FUV,Z)
+            if process == "Grav. Compression": process_rate[j,i] = compression_heating(nH,T)
+            if process == "Turb. Dissipation": process_rate[j,i] = turbulent_heating(sigma_GMC=sigma_GMC,M_GMC=M_GMC)
+    return process_rate
+def process_single_cal( nH, NH,T=100, X_FUV=1,X_OPT=1,Z=1, z=0, divv=None, zeta_CR=2e-16, Tdust=None,jeans_shielding=False,dust_beta=2.,dust_coupling=1,sigma_GMC=100,M_GMC=1e6, processes=all_processes, attenuate_cr=True,co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)",y_fac=(1.0 - 0.76) / 4.0 / 0.76):
+    process_rate=np.zeros(len(processes))
+    if jeans_shielding:
+        lambda_jeans = 8.1e19 * nH**-0.5 * (T/10)**0.5
+        NH = np.max([nH*lambda_jeans*jeans_shielding, NH],axis=0)
+    if Tdust==None:
+        Tdust = dust_temperature(nH,T,Z,NH,X_FUV,X_OPT,z,dust_beta,dust_coupling * ("Dust-Gas Coupling" in processes))
+    for j in range(len(processes)):
+        process = processes[j]
+        if process == "CR Heating": process_rate[j] = CR_heating(T, nH, zeta_CR, X_FUV, Z, NH=NH*attenuate_cr)
+        if process == "Lyman cooling": process_rate[j] = lyman_cooling(nH,T)
+        if process == "Photoelectric": process_rate[j] = photoelectric_heating(X_FUV, nH,T, NH, Z)
+        if process == "CII Cooling": process_rate[j] = CII_cooling(nH, Z, T, NH, X_FUV,prescription=cii_prescription,zeta_CR = zeta_CR,y_fac=y_fac)
+        if process == "CO Cooling": process_rate[j] = CO_cooling(nH,T,NH,Z,X_FUV,divv,prescription=co_prescription)
+        if process == "Dust-Gas Coupling": process_rate[j] = dust_gas_cooling(nH,T,Tdust,Z,dust_coupling)
+        if process == "H_2 Cooling": process_rate[j] = H2_cooling(nH,NH,T,X_FUV,Z)
+        if process == "Grav. Compression": process_rate[j] = compression_heating(nH,T)
+        if process == "Turb. Dissipation": process_rate[j] = turbulent_heating(sigma_GMC=sigma_GMC,M_GMC=M_GMC)
+    return process_rate

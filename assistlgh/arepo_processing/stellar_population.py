@@ -440,9 +440,9 @@ GRAVITY = 6.67430e-11  # m^3 kg^-1 s^-2
 M_PI = math.pi
 SOLAR_RADIUS = 6.957e8  # meters
 
-def Rochelobe_radius(logp, q, m1):
+def Rochelobe_radius(logp, q, m1,UnitMass_in_g):
     q = 1/q
-    m1 = m1 * All.UnitMass_in_g
+    m1 = m1 * UnitMass_in_g
     p = math.pow(10, logp) * 24 * 3600  # convert from days to seconds
     a = math.pow(GRAVITY * m1 * (1 + 1/q) * math.pow(p, 2) / (4 * M_PI * M_PI), 1/3)
     return (0.49 * math.pow(q, 2.0/3.0) / (0.69 * math.pow(q, 2.0/3.0) + math.log(1 + math.pow(q, 1.0/3.0)))) * a / SOLAR_RADIUS
@@ -486,7 +486,7 @@ def determine_case(items,UnitMass_in_g = 1.989e33,AccretionEffeciencyBeta = 0.5,
         Casetag = np.zeros(len(items))
         for i,item in enumerate(items):
             m1, logp, q, metallicity = item
-            Rl = Rochelobe_radius(logp, q, m1)
+            Rl = Rochelobe_radius(logp, q, m1,UnitMass_in_g)
             iz_low, iz_high, dz = get_z_indicies(metallicity, Qcrits['Metallicity'], 1e-20)
             im_low, im_high, dm = get_z_indicies(math.log10(m1), Qcrits['logM'], 0)
             ir_low, ir_high, dr = get_z_indicies(math.log10(Rl), Qcrits['logRl'], -0.05)
