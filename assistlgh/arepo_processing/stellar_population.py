@@ -440,7 +440,7 @@ GRAVITY = 6.67430e-11  # m^3 kg^-1 s^-2
 M_PI = math.pi
 SOLAR_RADIUS = 6.957e8  # meters
 
-def Rochelobe_radius(logp, q, m1,UnitMass_in_g):
+def Rochelobe_radius(logp, q, m1,UnitMass_in_g = 1.989e33):
     q = 1/q
     m1 = m1 * UnitMass_in_g
     p = math.pow(10, logp) * 24 * 3600  # convert from days to seconds
@@ -464,8 +464,19 @@ def get_z_indicies(value, array, offset=0):
         delta = (value - array[low]) / (array[high] - array[low])
     
     return low, high, delta
-def determine_case(items,UnitMass_in_g = 1.989e33,AccretionEffeciencyBeta = 0.5,Useisentropicenvelopemodel = 0):
-    with h5py.File('Arepo_GFM_Tables/Yields/Qcrits.hdf5', 'r') as f:
+def determine_case(items,qcritpath='Arepo_GFM_Tables/Yields/Qcrits.hdf5',UnitMass_in_g = 1.989e33,AccretionEffeciencyBeta = 0.5,Useisentropicenvelopemodel = 0):
+    """_summary_
+
+    Args:
+        items ([n,4] array): [m1, logp, q, metallicity]*n
+        UnitMass_in_g (_type_, optional): _description_. Defaults to 1.989e33.
+        AccretionEffeciencyBeta (float, optional): _description_. Defaults to 0.5.
+        Useisentropicenvelopemodel (int, optional): _description_. Defaults to 0.
+
+    Returns:
+        _type_: _description_
+    """
+    with h5py.File(qcritpath, 'r') as f:
         Qcrits = {
             'Metallicity': f['/Metallicities'][:],
             'logM': f['/logM'][:],
@@ -490,16 +501,13 @@ def determine_case(items,UnitMass_in_g = 1.989e33,AccretionEffeciencyBeta = 0.5,
             iz_low, iz_high, dz = get_z_indicies(metallicity, Qcrits['Metallicity'], 1e-20)
             im_low, im_high, dm = get_z_indicies(math.log10(m1), Qcrits['logM'], 0)
             ir_low, ir_high, dr = get_z_indicies(math.log10(Rl), Qcrits['logRl'], -0.05)
-                
+            if dr==0:
+                Casetag[i] = -1
+                continue
             # Interpolate values
             qad = interp_3d(Qcrits['Q_crit'], qadindex, iz_low, iz_high, im_low, im_high, ir_low, ir_high, dz, dm, dr)
             qth = interp_3d(Qcrits['Q_crit'], 6, iz_low, iz_high, im_low, im_high, ir_low, ir_high, dz, dm, dr)
             qL2 = interp_3d(Qcrits['Q_crit'], 7, iz_low, iz_high, im_low, im_high, ir_low, ir_high, dz, dm, dr)
-            
-            # Debug print
-            print(f"qad: {qad}, qth: {qth}, qL2: {qL2}")
-            print(f"1/q: {1/q}")
-            
             # Determine case
             if qad == -1 and qL2 == -1 and qth == -1:
                 Casetag[i] = -1
@@ -548,6 +556,77 @@ def test_determine_case():
         print(f"\nTest case {i+1}: m1={m1}, logp={logp}, q={q}, metallicity={metallicity}")
         result = determine_case(m1, logp, q, metallicity)
         print(f"Result: {result}")
+def effective_core_mass_fraction(M, metallicity=0.02):
+    c=np.zeros(8)
+    if metallicity == 0.02:
+        if (M > 0.4 and M <=4):
+            c[0] = -0.999710;
+            c[1] = 0.276843;
+            c[2] = 0.0393513;
+            c[3] = 0;
+            c[4] = 2.75579;
+            c[5] = -1.70434;
+            c[6] = 1.46625;
+            c[7] = 0;
+        elif (M>= 4 ):  
+            c[0] = -0.685213;
+            c[1] = 0.289269;
+            c[2] = 0.0123223;
+            c[3] = 3.3357e-6;
+            c[4] = 2.70964;
+            c[5] = 1.44963;
+            c[6] = 0.629121;
+            c[7] = 0.000493117;
+    elif (metallicity == 0.001):
+        if (M >0.4 and M<=5):
+            c[0] = -0.873596;
+            c[1] = 0.165455;
+            c[2] = 0.0158297;
+            c[3] = 0;
+            c[4] = 2.72675;
+            c[5] = -1.33733;
+            c[6] = 0.644498;
+            c[7] = 0;
+        elif (M>5):
+            c[0] = -0.682671;
+            c[1] = 0.185036;
+            c[2] = 0.00658021;
+            c[3] = 7.5450e-7;
+            c[4] = 2.71437;
+            c[5] = 0.334367;
+            c[6] = 0.343889;
+            c[7] = 0.000185160;
+    else:
+        c_low = np.zeros(8)
+        c_high = np.zeros(8)
+        if (M > 0.4 and M <= 4):
+            c[0] = -0.873596 + (-0.999710 + 0.873596) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[1] = 0.165455 + (0.276843 - 0.165455) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[2] = 0.0158297 + (0.0393513 - 0.0158297) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[3] = 0
+            c[4] = 2.72675 + (2.75579 - 2.72675) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[5] = -1.33733 + (-1.70434 + 1.33733) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[6] = 0.644498 + (1.46625 - 0.644498) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[7] = 0
+        elif (M > 4 and M <= 5):
+            c[0] = -0.873596 + (-0.685213 + 0.873596) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[1] = 0.165455 + (0.289269 - 0.165455) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[2] = 0.0158297 + (0.0123223 - 0.0158297) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[3] = 0 + (3.3357e-6 - 0) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[4] = 2.72675 + (2.70964 - 2.72675) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[5] = -1.33733 + (1.44963 + 1.33733) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[6] = 0.644498 + (0.629121 - 0.644498) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[7] = 0 + (0.000493117 - 0) * (metallicity - 0.001) / (0.02 - 0.001)
+        elif (M > 5):
+            c[0] = -0.682671 + (-0.685213 + 0.682671) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[1] = 0.185036 + (0.289269 - 0.185036) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[2] = 0.00658021 + (0.0123223 - 0.00658021) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[3] = 7.5450e-7 + (3.3357e-6 - 7.5450e-7) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[4] = 2.71437 + (2.70964 - 2.71437) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[5] = 0.334367 + (1.44963 - 0.334367) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[6] = 0.343889 + (0.629121 - 0.343889) * (metallicity - 0.001) / (0.02 - 0.001)
+            c[7] = 0.000185160 + (0.000493117 - 0.000185160) * (metallicity - 0.001) / (0.02 - 0.001)
+    return (1+c[0]*M+c[1]*pow(M,3)+c[2]*pow(M,5)+c[3]*pow(M,7))/(c[4]+c[5]*pow(M,2)+c[6]*pow(M,4)+c[7]*pow(M,6))
 
 if __name__ == '__main__':
     from scipy.integrate import quad

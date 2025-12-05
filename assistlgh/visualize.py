@@ -17,10 +17,9 @@ import pkg_resources
 def load_mplstyle_path():
     return pkg_resources.resource_filename(__name__, 'assistlgh.mplstyle')
 
-def mplstyle_rc(customap=False):
+def mplstyle_rc():
     plt.style.use(pkg_resources.resource_filename(__name__, 'assistlgh.mplstyle'))
-    if customap:
-        plt.rcParams['axes.prop_cycle'] = cycler('color', ['#C64B2B','#5084C3','#E728F4','#f9ed69','#799936','#22BB9C','#C3E3E5','#F6A495','#907CC8','#6B3A7F'])
+    plt.rcParams['axes.prop_cycle'] = cycler('color', ['#C64B2B','#5084C3','#E728F4','#f9ed69','#799936','#22BB9C','#C3E3E5','#F6A495','#907CC8','#6B3A7F'])
 def auto_fontsize(figsize=4.8,fac=3):
     font_size = figsize*fac
     plt.rcParams.update({
@@ -62,7 +61,7 @@ def Polygon_plot(df,x,y,piece,vmin=-1,vmax=1,cmap= 'RdYlBu',**kwargs):
     for key in defaultkw.keys():
         if key not in kwargs.keys():
             kwargs[key] = defaultkw[key]
-    for index in len(data):
+    for index in range(len(df)):
         p = x[index]
         q = piece[index]
         m = y[index]
