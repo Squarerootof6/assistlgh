@@ -517,6 +517,11 @@ def Lambda(T, nh_cgs, NH_cgs, xh1, xhm, xe,y_fac, xC_tot = 1.6e-4, xO_tot = 3.2e
     Lambda_metal = CII_Cooling + CI_Cooling + OI_Cooling + CO_Cooling
     return Lambda_metal
 
+from scipy.optimize import brentq, newton, root_scalar
+from scipy.interpolate import interpn, interp1d
+from numba import njit
+import numpy as np
+
 def photoelectric_heating(X_FUV=1, nH=1, T=10, NH=0, Z=1):
     """
     Rate of photoelectric heating per H nucleus in erg/s.
@@ -644,7 +649,6 @@ def CO_cooling(nH=1, T=10, NH=0,Z=1,X_FUV=1,divv=None,xCO=None,simple=False,pres
     if divv is None:
         R_scale = NH/nH/pc_to_cm
         divv = 1. * R_scale**0.5 / R_scale # size-linewidth relation
-
     if prescription=="Gong 2017":
         n_H2 = fmol*nH/2
         neff = n_H2 + nH*2**0.5 * (2.3e-15/(3.3e-16*(T/1000)**-0.25)) # Eq. 34 from gong 2017, ignoring electrons 
@@ -774,7 +778,6 @@ def net_heating(T=10, nH=1, NH=0, X_FUV=1,X_OPT=1,Z=1, z=0, divv=None, zeta_CR=2
         NH = np.max([nH*lambda_jeans*jeans_shielding, NH],axis=0)
     if Tdust==None:
         Tdust = dust_temperature(nH,T,Z,NH,X_FUV,X_OPT,z,dust_beta,dust_coupling * ("Dust-Gas Coupling" in processes))
-
     rate = 0
     for process in processes:
         if process == "CR Heating": rate += CR_heating(T, nH, zeta_CR, X_FUV, Z, NH=NH*attenuate_cr)
@@ -788,13 +791,12 @@ def net_heating(T=10, nH=1, NH=0, X_FUV=1,X_OPT=1,Z=1, z=0, divv=None, zeta_CR=2
         if process == "Turb. Dissipation": rate += turbulent_heating(sigma_GMC=sigma_GMC,M_GMC=M_GMC)
         
     return rate
-
 def equilibrium_temp(nH=1, NH=0, X_FUV=1,X_OPT=1, Z=1, z=0, divv=None, zeta_CR=2e-16, Tdust=None,jeans_shielding=False,
                      dust_beta=2.,dust_coupling=1,sigma_GMC=100.,M_GMC=1e6, processes=all_processes,attenuate_cr=True,
-                     co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)",return_Tdust=True,T_guess=None):
+                     co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)",y_fac=(1.0 - 0.76) / 4.0 / 0.76,return_Tdust=True,T_guess=None):
     
     if NH==0: NH=1e18
-    params = nH, NH, X_FUV,X_OPT, Z, z, divv, zeta_CR, Tdust, jeans_shielding, dust_beta, dust_coupling, sigma_GMC,M_GMC,processes, attenuate_cr, co_prescription, cii_prescription
+    params = nH, NH, X_FUV,X_OPT, Z, z, divv, zeta_CR, Tdust, jeans_shielding, dust_beta, dust_coupling, sigma_GMC,M_GMC,processes, attenuate_cr, co_prescription, cii_prescription,y_fac
     func = lambda logT: net_heating(10**logT, *params) # solving vs logT converges a bit faster
     
     use_brentq = True
@@ -821,19 +823,17 @@ def equilibrium_temp(nH=1, NH=0, X_FUV=1,X_OPT=1, Z=1, z=0, divv=None, zeta_CR=2
 
 def equilibrium_temp_grid(nH, NH, X_FUV=1, X_OPT=1, Z=1, z=0, divv=None, zeta_CR=2e-16, Tdust=None,jeans_shielding=False,
     dust_beta=2.,dust_coupling=1,sigma_GMC=100.,M_GMC=1e6, processes=all_processes,attenuate_cr=True,return_Tdust=False,
-    co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)"):
-        
-    params = X_FUV, X_OPT, Z, z, divv, zeta_CR, Tdust, jeans_shielding, dust_beta, dust_coupling, sigma_GMC,M_GMC,processes, attenuate_cr, co_prescription, cii_prescription
+    co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)",y_fac=(1.0 - 0.76) / 4.0 / 0.76):
+    
+    params = X_FUV, X_OPT, Z, z, divv, zeta_CR, Tdust, jeans_shielding, dust_beta, dust_coupling, sigma_GMC, M_GMC, processes, attenuate_cr, co_prescription, cii_prescription, y_fac
     Ts = []
     Tds = []
-
     T_guess = None
-    for i in range(len(nH)): # we do a pass on the grid where we use previously-evaluated temperatures to get good initial guesses for the next grid point
+    for i in prange(len(nH)): # we do a pass on the grid where we use previously-evaluated temperatures to get good initial guesses for the next grid point
         if i==1:
             T_guess = Ts[-1]
         elif i>1:
             T_guess = 10**interp1d(np.log10(nH[:i]),np.log10(Ts),fill_value="extrapolate")(np.log10(nH[i])) # guess using linear extrapolation in log space
-
         sol = equilibrium_temp(nH[i],NH[i],*params,return_Tdust=return_Tdust,T_guess=T_guess)
         if return_Tdust:
             T, Tdust = sol
@@ -850,9 +850,10 @@ def get_equilibrium_curve(snap,mask_sf,n,rho0,M):
     NH2 = np.median((2*snap['0_H2_Fraction'][mask_sf]*snap['0_Density'][mask_sf]/c.m_p*snap['0_Diameters'][mask_sf]).to('cm-2').value)
     #NH2 = (np.sum(snap['0_H2_Fraction'][mask_sf]*snap['0_Masses'][mask_sf])/2/c.m_p/np.sum(3*snap['0_Volume'][mask_sf]/4/np.pi)**(2/3)/np.pi).to('cm-2').value
     #Z = 0.03288415123139433             #Metalicity in solar
-    Z = np.sum(snap['0_GFM_MetallicityTimesMasses'][mask_sf])/np.sum(snap['0_Masses'][mask_sf])/0.012892950745
+    Z = (np.sum(snap['0_GFM_MetallicityTimesMasses'][mask_sf])/np.sum(snap['0_Masses'][mask_sf])/0.012892950745).value
+    y_fac = (np.sum(snap['0_GFM_Metals'][mask_sf,1]*snap['0_Masses'][mask_sf])/np.sum(snap['0_Masses'][mask_sf])).value
     z = 0                 #redshift
-    Habing = u.Unit(5.29e-14*u.erg*u.cm**(-3)*1000)
+    Habing = u.Unit(5.29e-14*u.erg*u.cm**(-3))
     Draine = 1.71*Habing
     #X_FUV = (np.median(snap['0_PhotonDensity'][mask_sf,1]*8.45*u.eV+snap['0_PhotonDensity'][mask_sf,2]*12.26*u.eV)).to(Habing).value*1e63         #Habing, FUV radiation field strength
     #X_OPT = (np.median(snap['0_PhotonDensity'][mask_sf,0])*3.67*u.eV).to(Habing).value*1e63        #IR-Opt radiation field strength
@@ -868,11 +869,72 @@ def get_equilibrium_curve(snap,mask_sf,n,rho0,M):
     attenuate_cr = True   #Cosmic ray attenuation
     NH = NH2 * (n/1e2)**NH_alpha
     
-    processes_Deng = "CR Heating", "Lyman cooling", "Photoelectric", "CII Cooling", "H_2 Cooling", "Dust-Gas Coupling"
+    processes_Deng = ["CR Heating", "Lyman cooling", "Photoelectric", "CII Cooling", "H_2 Cooling", "Dust-Gas Coupling","Grav. Compression","CO Cooling","Turb. Dissipation"]
     Teq_Deng = equilibrium_temp_grid(n, NH, X_FUV=X_FUV, X_OPT=X_OPT, Z=Z, z=z, divv=None, zeta_CR=1.78e-16, Tdust=Tdust,jeans_shielding=False,
     dust_beta=2.,dust_coupling=1,sigma_GMC=rho0.value,M_GMC=M.value, processes=processes_Deng,attenuate_cr=attenuate_cr,return_Tdust=False,
-    co_prescription=None,cii_prescription='Deng')
+    co_prescription="Whitworth 2018",cii_prescription='Deng',y_fac = y_fac)
     return Teq_Deng
+def get_equilibrium_curve_binnedbyn(snap,mask_sf,n,rho0,M, z=0, divv=None, zeta_CR=2e-16, jeans_shielding=False,dust_beta=2.,dust_coupling=1,attenuate_cr=True,return_Tdust=False,co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)"):
+
+    Habing = u.Unit(5.29e-14*u.erg*u.cm**(-3))
+    sigma_GMC=rho0.value;M_GMC=M.value
+    X_FUV_global = (np.sum((snap['0_PhotonDensity'][mask_sf,1]*8.45*u.eV + snap['0_PhotonDensity'][mask_sf,2]*12.26*u.eV)*snap['0_Volume'][mask_sf]) / np.sum(snap['0_Volume'][mask_sf])).to(Habing).value*1e63
+    X_OPT_global = (np.sum(snap['0_PhotonDensity'][mask_sf,0]*3.67*u.eV*snap['0_Volume'][mask_sf]) / np.sum(snap['0_Volume'][mask_sf])).to(Habing).value*1e63
+    Tdust_global = (np.sum(snap['0_DustTemperature'][mask_sf]*snap['0_Masses'][mask_sf]) / np.sum(snap['0_Masses'][mask_sf])).to(u.K).value
+    Z_global = np.sum(snap['0_GFM_MetallicityTimesMasses'][mask_sf]) / np.sum(snap['0_Masses'][mask_sf]) / 0.012892950745
+    y_fac_global = (np.sum(snap['0_GFM_Metals'][mask_sf,1]*snap['0_Masses'][mask_sf]) / np.sum(snap['0_Masses'][mask_sf])).value
+
+    logn = np.log10(n)
+    edges_log = np.empty(len(n) + 1)
+    edges_log[1:-1] = 0.5 * (logn[:-1] + logn[1:])
+    edges_log[0] = logn[0] - (edges_log[1] - logn[0])
+    edges_log[-1] = logn[-1] + (logn[-1] - edges_log[-2])
+    edges = 10**edges_log
+    numdens = snap['0_NumberDensity'].to('cm-3').value
+    vol = snap['0_Volume']
+    mass = snap['0_Masses']
+    phot = snap['0_PhotonDensity']
+    dustT = snap['0_DustTemperature']
+    processes_Deng = ["CR Heating", "Lyman cooling", "Photoelectric", "CII Cooling", "H_2 Cooling", "Dust-Gas Coupling","Grav. Compression","CO Cooling","Turb. Dissipation"]
+    Ts =  np.zeros(len(n))
+    Tds = np.zeros(len(n))
+    for i in prange(len(n)):
+        lo, hi = edges[i], edges[i+1]
+        pmask = np.logical_and(numdens >= lo, numdens < hi)
+        if pmask.sum() == 0:
+            X_FUV = X_FUV_global
+            X_OPT = X_OPT_global
+            Tdust = Tdust_global
+            Z = Z_global.value
+            y_fac = y_fac_global
+            NH = np.median((snap['0_HI_Fraction'][mask_sf] * snap['0_Density'][mask_sf] / c.m_p * snap['0_Diameters'][mask_sf]).to('cm-2').value)
+        else:
+            num = np.sum((phot[pmask,1]*8.45*u.eV + phot[pmask,2]*12.26*u.eV) * vol[pmask])
+            den = np.sum(vol[pmask])
+            X_FUV = (num/den).to(Habing).value*1e63
+            numo = np.sum(phot[pmask,0]*3.67*u.eV * vol[pmask])
+            X_OPT = (numo/den).to(Habing).value*1e63
+            Tdust = (np.sum(dustT[pmask]*mass[pmask]) / np.sum(mass[pmask])).to(u.K).value
+            Z = (np.sum(snap['0_GFM_MetallicityTimesMasses'][pmask]) / np.sum(mass[pmask]) / 0.012892950745).value
+            y_fac = (np.sum(snap['0_GFM_Metals'][pmask,1]*mass[pmask]) / np.sum(mass[pmask])).value
+            NH = (np.sum(snap['0_HI_Fraction'][pmask] * snap['0_Masses'][pmask]/ c.m_p)/np.sum(np.pi*snap['0_Diameters'][pmask]**2/4)).to('cm-2').value
+        params = X_FUV, X_OPT, Z, z, divv, zeta_CR, Tdust, jeans_shielding, dust_beta, dust_coupling, sigma_GMC, M_GMC, processes_Deng, attenuate_cr, co_prescription, cii_prescription, y_fac
+        T_guess = None
+        if i==1:
+            T_guess = Ts[i-1]
+        elif i>1:
+            T_guess = 10**interp1d(np.log10(n[:i]),np.log10(Ts[:i]),fill_value="extrapolate")(np.log10(n[i])) # guess using linear extrapolation in log space
+        sol = equilibrium_temp(n[i],NH,*params,return_Tdust=return_Tdust,T_guess=T_guess)
+        if return_Tdust:
+            T, Tdust = sol
+            Ts[i] = T
+            Tds[i] = Tdust
+        else:
+            Ts[i] = sol
+    if return_Tdust:
+        return Ts, Tds
+    else:
+        return Ts
 def process_cal( nHs, NHs,T=100, X_FUV=1,X_OPT=1,Z=1, z=0, divv=None, zeta_CR=2e-16, Tdust=None,jeans_shielding=False,dust_beta=2.,dust_coupling=1,sigma_GMC=100,M_GMC=1e6, processes=all_processes, attenuate_cr=True,co_prescription="Whitworth 2018",cii_prescription="Hopkins 2022 (FIRE-3)",y_fac=(1.0 - 0.76) / 4.0 / 0.76):
     process_rate=np.zeros((len(processes),len(nHs)))
     for i in prange(len(nHs)):
@@ -914,3 +976,11 @@ def process_single_cal( nH, NH,T=100, X_FUV=1,X_OPT=1,Z=1, z=0, divv=None, zeta_
         if process == "Grav. Compression": process_rate[j] = compression_heating(nH,T)
         if process == "Turb. Dissipation": process_rate[j] = turbulent_heating(sigma_GMC=sigma_GMC,M_GMC=M_GMC)
     return process_rate
+def process_loop(n,NH,X_FUV,X_OPT,T,Tdust,processes,Z,Vol,y_fac,divv):
+    mean_coolingrate = np.zeros(len(processes))
+    for ni in prange(len(n)):
+        process_rate = process_single_cal(nH=n[ni],NH=NH[ni],X_FUV=X_FUV[ni],X_OPT=X_OPT[ni],T=T[ni],Tdust=Tdust[ni],divv=divv[ni],processes=processes,Z=Z,y_fac=y_fac[ni])
+        mean_coolingrate += process_rate*n[ni]**2*Vol[ni]
+        #mean_coolingrate += process_rate
+    mean_coolingrate /= np.sum(n*Vol)
+    return mean_coolingrate
