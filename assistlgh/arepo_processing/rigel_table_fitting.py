@@ -2,7 +2,8 @@ import numpy as np
 from scipy.optimize import brentq, newton, root_scalar
 from scipy.interpolate import interpn, interp1d
 from numba import njit,prange
-
+import astropy.constants as c
+import astropy.units as u
 
 def hardness(mass):
     if (mass<=40):
