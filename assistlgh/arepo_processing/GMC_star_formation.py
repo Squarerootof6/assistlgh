@@ -2,6 +2,8 @@ import math
 import astropy.units as u
 import astropy.constants as c
 import numpy as np
+from numba import jit,prange
+from assistlgh.arepo_processing.read_parameter import AllPara
 def gmc_starformation_criteria(i, SphP, All):
     """_summary_
 
@@ -65,3 +67,102 @@ def gmc_starformation_criteria(i, SphP, All):
     crit_flag[np.logical_and(mask,crit_flag==1)] = 0
     # potential peak?? TO DO
     return crit_flag
+
+@jit(fastmath=True,nopython=True)
+def gmc_starformation_criteria_single(pressure,density,InternalEnergy,Masses,VelocityDivergence,VelocityCurl,UnitEnergy_in_cgs,UnitMass_in_g,UnitTime_in_s,UnitLength_in_cm,GMCDensMax,GMCTempThres,GMCDensThres,GMCNumJeansMassNecessary,GMCNumJeansMassSufficient,GravityConstantInternal,GMCSelfGravFactor,verbose=False):
+    """_summary_
+    Args:
+        i (_int_): order of sph paricle list
+        SphP (_h5py_): Sph particle list
+        All (_AllPara_): parameter list
+    Returns:
+        _int_: starformation criteria flag in RIGEL
+    """
+    HYDROGEN_MASSFRAC=1;BOLTZMANN=1.38065e-16;PROTONMASS=1.67262178e-24;GAMMA =(5. / 3.);GAMMA_MINUS1=(GAMMA - 1.);GRAVITY = 6.6738e-8
+    meanweight = 4.0 / (1+3*HYDROGEN_MASSFRAC); 
+    temperature_prefac = UnitEnergy_in_cgs / UnitMass_in_g * GAMMA_MINUS1 * meanweight * PROTONMASS / BOLTZMANN;
+    crit_flag = 1
+    # force star formation if gas density reaches GMCDensMax
+    if density > GMCDensMax:
+        if verbose:
+            print('density > GMCDensMax')
+        crit_flag = 2
+        return crit_flag
+    # temperature threshold
+    uthermal = InternalEnergy
+    if temperature_prefac * uthermal > GMCTempThres:
+        if verbose:
+            print('temperature_prefac * uthermal > GMCTempThres')
+        crit_flag = 0
+        return crit_flag
+    # density threshold
+    if density < GMCDensThres:
+        if verbose:
+            print('density < GMCDensThres')
+        crit_flag = 0
+        return crit_flag
+    # Jeans threshold (Necessary condition)
+    # Yunwei suggests 10
+    #pressure = (GAMMA-1)*density*UnitMass_in_g/UnitLength_in_cm**3*InternalEnergy*UnitEnergy_in_cgs
+    cs2 = GAMMA * pressure / density
+    if GravityConstantInternal == 0:
+        G = GRAVITY / pow(UnitLength_in_cm, 3) * UnitMass_in_g * pow(UnitTime_in_s, 2);
+    else:
+        G = GravityConstantInternal
+    mJeans = math.pi / 6.0 * np.sqrt((3.0 / 32.0 * cs2 * math.pi / G)**3 / density)
+    if mJeans > GMCNumJeansMassNecessary * Masses:
+        if verbose:
+            print('mJeans > GMCNumJeansMassNecessary * Masses',mJeans,GMCNumJeansMassNecessary,Masses)
+        crit_flag = 0
+        return crit_flag
+    # force star formation if Jeans mass is not resolved (Sufficient condition)
+    # Yunwei suggests 0.12 from Grudic 21, assume f_J = 0.5
+    if mJeans < GMCNumJeansMassSufficient * Masses:
+        if verbose:
+            print('mJeans < GMCNumJeansMassSufficient * Masses')
+        crit_flag = 2
+        return crit_flag
+    # self-gravitational e.g. Hopkins+13
+    sigma_turb2 = VelocityDivergence * VelocityDivergence + VelocityCurl * VelocityCurl
+    alpha_selfgrav = GMCSelfGravFactor * sigma_turb2 / G / density
+    if alpha_selfgrav > 1:
+        if verbose:
+            print('alpha_selfgrav > 1')
+        crit_flag = 0
+        return crit_flag
+    # divergence flow
+    if VelocityDivergence > 0:
+        if verbose:
+            print('VelocityDivergence>0')
+        crit_flag = 0
+        return crit_flag
+    return crit_flag
+    
+@jit(fastmath=True,nopython=True)
+def main_loop(Number,pressure,density,InternalEnergy,Masses,VelocityDivergence,VelocityCurl,UnitEnergy_in_cgs,UnitMass_in_g,UnitTime_in_s,UnitLength_in_cm,GMCDensMax,GMCTempThres,GMCDensThres,GMCNumJeansMassNecessary,GMCNumJeansMassSufficient,GravityConstantInternal,GMCSelfGravFactor):
+    mask_sf = np.zeros(Number)
+    for i in range(Number):
+        mask_sf[i] = gmc_starformation_criteria_single(pressure[i],density[i],InternalEnergy[i],Masses[i],VelocityDivergence[i],VelocityCurl[i],UnitEnergy_in_cgs,UnitMass_in_g,UnitTime_in_s,UnitLength_in_cm,GMCDensMax,GMCTempThres,GMCDensThres,GMCNumJeansMassNecessary,GMCNumJeansMassSufficient,GravityConstantInternal,GMCSelfGravFactor)
+    return mask_sf
+def decide_sf(snap,outputdir):
+    para = AllPara('./'+outputdir+'/param.txt')
+    UnitEnergy_in_cgs = para.UnitEnergy_in_cgs
+    UnitMass_in_g = para.UnitMass_in_g
+    UnitTime_in_s = para.UnitTime_in_s
+    UnitLength_in_cm = para.UnitLength_in_cm
+    GMCDensMax = para.GMCDensMax
+    GMCTempThres = para.GMCTempThres
+    GMCDensThres = para.GMCDensThres
+    GMCNumJeansMassNecessary = para.GMCNumJeansMassNecessary
+    GMCNumJeansMassSufficient = para.GMCNumJeansMassSufficient
+    GravityConstantInternal = para.GravityConstantInternal
+    GMCSelfGravFactor = para.GMCSelfGravFactor
+    Masses = snap['0_Masses'].value
+    pressure = snap['0_Pressure'].value
+    density = snap['0_Density'].value
+    InternalEnergy = snap['0_InternalEnergy'].value
+    VelocityDivergence = snap['0_VelocityDivergence'].value
+    VelocityCurl = snap['0_VelocityCurl'].value
+    mask_sf = main_loop(len(Masses),pressure,density,InternalEnergy,Masses,VelocityDivergence,VelocityCurl,UnitEnergy_in_cgs,UnitMass_in_g,UnitTime_in_s,UnitLength_in_cm,GMCDensMax,GMCTempThres,GMCDensThres,GMCNumJeansMassNecessary,GMCNumJeansMassSufficient,GravityConstantInternal,GMCSelfGravFactor)
+    mask_sf = mask_sf.astype(bool)
+    return mask_sf
